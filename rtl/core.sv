@@ -214,9 +214,20 @@ module core
 
     // ---------------------------------------------------------------- EX
 
-    logic [31:0] rs1_e, rs2_e;   // operand values (forwarding is added in step 3)
-    assign rs1_e = e.rs1_val;
-    assign rs2_e = e.rs2_val;
+    // Forwarding: an operand read in ID may be stale because an older instruction that writes
+    // it is still in MEM or WB. Take the newest value instead: MEM first (the instruction just
+    // ahead), then WB. A load in MEM has no data yet; the load-use stall keeps a dependent
+    // instruction out of EX until the load reaches WB. Three instructions back is covered by the
+    // register file's write-before-read.
+    function automatic logic [31:0] forward(input logic [4:0] rs, input logic [31:0] id_value);
+        if (m.valid && m.reg_write && !m.mem_read && m.rd == rs) return m.result;
+        else if (w.valid && w.reg_write && w.rd == rs)          return wb_data;
+        else                                                    return id_value;
+    endfunction
+
+    logic [31:0] rs1_e, rs2_e;
+    assign rs1_e = forward(e.rs1, e.rs1_val);
+    assign rs2_e = forward(e.rs2, e.rs2_val);
 
     logic [31:0] alu_a, alu_b, alu_y;
 
