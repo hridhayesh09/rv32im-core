@@ -12,7 +12,7 @@ SystemVerilog, grown into a system-on-chip on the Terasic DE10-Lite (Intel MAX 1
 | 0 | Toolchain, repo skeleton, CI | done |
 | 1 | 5-stage RV32IM pipeline, riscv-tests, Spike lockstep, random tests, C programs | done |
 | 2 | SoC: Wishbone bus, boot ROM, SDRAM, UART, timer, GPIO, UART bootloader | built and simulated; compiles for the DE10-Lite; board bring-up pending ([checklist](docs/board_bringup.md)) |
-| 3 | VGA framebuffer, graphics driver, a playable game | planned |
+| 3 | VGA framebuffer, graphics driver, a playable game | built and simulated (Snake); compiles for the DE10-Lite; board bring-up pending |
 | 4 | Systolic array accelerator, MNIST software vs accelerator | planned |
 | 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | planned |
 | stretch | Doom; OpenLane on Sky130 | planned |
@@ -92,11 +92,15 @@ The ideal CPI for this pipeline is 1. The extra cycles come from taken branches 
 load-use stalls (1 cycle) and divides (33 cycles each), which is why `primes`, full of `%`, is
 the slowest.
 
-**FPGA build** (Quartus Prime Lite 25.1, DE10-Lite / 10M50, whole SoC)
+**FPGA build** (Quartus Prime Lite 25.1, DE10-Lite / 10M50, whole SoC including VGA)
 
 | Logic elements | Memory bits | 9-bit multipliers | Fmax (slow, 85 °C) | Setup slack at 50 MHz |
 |---|---|---|---|---|
-| 4,626 (9 %) | 589,824 (35 %) | 8 (3 %) | 55.17 MHz | +1.875 ns |
+| 5,197 (10 %) | 897,024 (53 %), 110 / 182 M9K | 8 (3 %) | 52.63 MHz | +1.001 ns |
+
+**Snake on the CPU** (frame captured from the simulated VGA monitor; [how it's tested](docs/notes.md#stage-3-graphics))
+
+![Snake in simulation](docs/images/snake_sim.png)
 
 ## Getting started
 

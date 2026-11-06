@@ -84,3 +84,36 @@ README. Those are the first numbers measured on hardware.
 6. The SDRAM test ending with `SDRAM PASS`.
 7. End card: "RV32IM CPU + SoC, designed from scratch: 5-stage pipeline, Wishbone, UART, SDRAM,
    bootloader".
+
+---
+
+# Board bring-up: Stage 3 (VGA and Snake)
+
+Do Stage 2 first (bootloader and `hello` working). Then:
+
+1. Connect a VGA monitor to the DE10-Lite's VGA connector, and build and program the FPGA as in
+   Stage 2 (`make sw`, Quartus compile, program the `.sof`).
+2. Upload Snake:
+   ```bash
+   python tools/upload.py COM5 build/sw/snake.bin
+   ```
+   **Expect:** the monitor shows a big green `SNAKE` title and `PRESS A KEY OR BUTTON`; the
+   terminal shows `SNAKE ready`.
+3. Press KEY0 (or type `d` in the terminal) to start. **Expect:** grey walls, a green snake moving
+   right, a red food square, `SCORE 000` at the top and `0` on the 7-segment displays.
+4. Steer: KEY0 turns right, KEY1 turns left (or W/A/S/D in the terminal). Eat food: the score goes
+   up on screen, on the 7-segment displays and as `score N` lines in the terminal.
+5. Crash into a wall: **expect** yellow `GAME OVER`. Press a key to play again.
+
+If the monitor says "no signal" or "out of range": the timing is standard 640x480 at 59.5 Hz
+(checked in simulation), so first check the cable and that the FPGA is programmed. If colours are
+wrong, note which: the pin order of VGA_R/G/B came from the boardtest project, where VGA was not
+yet tested on the board.
+
+## What to film (Stage 3 demo video, ~1 minute)
+1. The monitor showing the SNAKE title screen, the board and the monitor in one shot.
+2. Starting the game with KEY0, steering with both keys: the snake turning on screen.
+3. Eating food: the score going up on the monitor and on the 7-segment displays at the same time.
+4. Crashing: GAME OVER, then restarting.
+5. A short cut to the terminal showing `score N` lines arriving while you play.
+6. End card: "Snake on my own RISC-V CPU: C code → my VGA controller → monitor".

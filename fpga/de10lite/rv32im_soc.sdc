@@ -9,4 +9,5 @@ derive_clock_uncertainty
 # registers and the inverted SDRAM clock (same scheme as edge-ml-accelerator/boardtest, where it
 # was measured on this board), so those pins aren't analyzed here.
 set_false_path -from [get_ports {KEY[*] SW[*] ARDUINO_IO[*] DRAM_DQ[*]}]
-set_false_path -to   [get_ports {LEDR[*] HEX*[*] ARDUINO_IO[*] DRAM_*}]
+# VGA: the monitor samples analog levels; nanosecond pin timing doesn't matter at 25 MHz.
+set_false_path -to   [get_ports {LEDR[*] HEX*[*] ARDUINO_IO[*] DRAM_* VGA_*}]

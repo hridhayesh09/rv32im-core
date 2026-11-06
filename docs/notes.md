@@ -923,3 +923,8 @@ second framebuffer and swap during blank) avoids it.
 **How did you test video output without a monitor?**
 A simulated monitor that locks onto the sync pulses like a real one, checks the timing, and saves
 frames as images, which the tests then check pixel by pixel.
+
+### Stage 3 on the FPGA
+Quartus (whole SoC with VGA): 5,197 logic elements (10 %), 897,024 memory bits in **110 of 182
+M9K blocks** (72 for the SoC + 38 for the framebuffer, as planned), 8 multipliers, Fmax 52.63 MHz
+at slow 85 °C, setup slack +1.001 ns at 50 MHz. That leaves 72 M9K for Stage 4.

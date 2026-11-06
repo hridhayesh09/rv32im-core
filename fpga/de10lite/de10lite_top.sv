@@ -4,6 +4,7 @@
 //   Reset      at power-up, or hold KEY0 and KEY1 together
 //   UART       Arduino header: IO0 = RX into the FPGA, IO1 = TX out of the FPGA
 //              (the DE10-Lite has no USB serial port: use a 3.3 V USB-serial adapter)
+//   VGA        640x480 at 60 Hz on the VGA connector
 //   SDRAM      DRAM_CLK is the inverted system clock, so the chip samples each command half a
 //              cycle after the controller sends it. Read data is then sampled 60 ns after READ;
 //              on this board (edge-ml-accelerator/boardtest) reads were clean from 50 to 70 ns.
@@ -14,6 +15,12 @@ module de10lite_top (
     output logic [9:0]  LEDR,
     output logic [7:0]  HEX0, HEX1, HEX2, HEX3, HEX4, HEX5,
     inout  wire  [15:0] ARDUINO_IO,
+
+    output logic [3:0]  VGA_R,
+    output logic [3:0]  VGA_G,
+    output logic [3:0]  VGA_B,
+    output logic        VGA_HS,
+    output logic        VGA_VS,
 
     output logic        DRAM_CLK,
     output logic        DRAM_CKE,
@@ -62,6 +69,11 @@ module de10lite_top (
         .sw           (SW),
         .key_n        (KEY),
         .hex_n,
+        .vga_r        (VGA_R),
+        .vga_g        (VGA_G),
+        .vga_b        (VGA_B),
+        .vga_hs       (VGA_HS),
+        .vga_vs       (VGA_VS),
         .sdram_cke    (DRAM_CKE),
         .sdram_cs_n   (DRAM_CS_N),
         .sdram_ras_n  (DRAM_RAS_N),

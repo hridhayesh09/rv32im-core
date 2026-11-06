@@ -27,6 +27,8 @@ set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_uart.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_timer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_gpio.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/fb_ram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_vga.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/sdram_ctrl.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/soc.sv
 set_global_assignment -name SYSTEMVERILOG_FILE de10lite_top.sv
@@ -184,3 +186,19 @@ set_location_assignment PIN_J21 -to DRAM_UDQM
 set_location_assignment PIN_V20 -to DRAM_WE_N
 
 set_global_assignment -name LAST_QUARTUS_VERSION "25.1std.0 Lite Edition"
+
+# ---------------------------------------------------------------- VGA
+set_location_assignment PIN_AA1 -to VGA_R[0]
+set_location_assignment PIN_V1 -to VGA_R[1]
+set_location_assignment PIN_Y2 -to VGA_R[2]
+set_location_assignment PIN_Y1 -to VGA_R[3]
+set_location_assignment PIN_W1 -to VGA_G[0]
+set_location_assignment PIN_T2 -to VGA_G[1]
+set_location_assignment PIN_R2 -to VGA_G[2]
+set_location_assignment PIN_R1 -to VGA_G[3]
+set_location_assignment PIN_P1 -to VGA_B[0]
+set_location_assignment PIN_T1 -to VGA_B[1]
+set_location_assignment PIN_P4 -to VGA_B[2]
+set_location_assignment PIN_N2 -to VGA_B[3]
+set_location_assignment PIN_N3 -to VGA_HS
+set_location_assignment PIN_N1 -to VGA_VS
