@@ -450,3 +450,54 @@ signed number.
 **What happens to the pipeline during a 33-cycle divide?**
 The divide stays in EX; IF and ID hold, and bubbles go into MEM, so older instructions finish. When
 the unit is done, the divide moves on and the pipeline continues.
+
+## Stage 1, step 10: running C programs
+
+**Startup code (`sw/crt0.S`).** C code expects a few things to be true before `main` runs.
+`crt0` ("C runtime zero") sets them up:
+1. Clear all registers (so the core and Spike start from the same state).
+2. Set the stack pointer to the end of RAM; the stack grows down from there.
+3. Zero the `.bss` section: C promises that global variables with no initial value start at 0.
+4. Call `main`, then report its return value through `tohost` (0 = pass).
+
+**Linker script (`sw/link.ld`).** Tells the linker where everything goes in memory: code first at
+0x80000000 (where the core starts after reset), then the `tohost` word, then initialized data,
+then `.bss`, and marks where the stack starts (`_stack_top`).
+
+**No C library.** The programs are built with `-nostdlib -ffreestanding`: there's no `printf` or
+`malloc` yet (Stage 2 adds a UART for printing). Each program checks its own results and returns 0
+or an error code.
+
+**The programs** (`sw/programs/`), each run in lockstep with Spike:
+- `fib.c`: recursive and iterative Fibonacci (lots of calls, returns and stack traffic).
+- `sort.c`: quicksort of 256 pseudo-random numbers, then a check that the output is sorted and is a
+  permutation of the input.
+- `primes.c`: counts the primes below 2000 by trial division, so it divides a lot.
+
+**Results** (from `make test`):
+
+| Program | Instructions | Cycles | CPI |
+|---|---|---|---|
+| fib | 176,516 | 203,389 | 1.152 |
+| sort | 29,513 | 38,312 | 1.298 |
+| primes | 72,250 | 504,092 | 6.977 |
+
+**CPI** (cycles per instruction) is 1 for a perfect pipeline. Each taken branch or jump adds 2,
+each load-use stall 1, each multiply 2, each divide 33. `fib` and `sort` are close to 1; `primes`
+is near 7 because almost every inner-loop iteration runs a 33-cycle divide.
+
+### Interview questions
+
+**What does crt0 do, and why can't main just start at the reset address?**
+C code assumes a valid stack pointer and zeroed `.bss`. The hardware gives neither at reset, so a
+small piece of assembly sets them up and then calls `main`.
+
+**What's in a linker script?**
+The memory regions and where each section (`.text`, `.data`, `.bss`, the stack) is placed in them,
+plus symbols the startup code uses (`_bss_start`, `_bss_end`, `_stack_top`).
+
+**Your primes program has a CPI of about 7. What would you do about it?**
+The cost is the 33-cycle divider. Options: a faster divider (radix-4 or SRT, 2+ bits per cycle);
+let independent instructions continue while the divider runs (needs a scoreboard to stall only
+real dependents); or change the software: a sieve instead of trial division avoids division
+entirely.

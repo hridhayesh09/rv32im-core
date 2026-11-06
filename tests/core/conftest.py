@@ -2,6 +2,7 @@
 and each program is then run on it in lockstep with Spike."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -28,12 +29,13 @@ def core_runner():
 
 @pytest.fixture
 def run_lockstep(core_runner):
-    """run_lockstep(src, includes, name): build the program, record Spike's trace, and run the
-    `lockstep` cocotb test (in lockstep.py) against it."""
-    def run(src, includes, name=None):
-        elf, hexfile, tohost = build(src, includes, name)
+    """run_lockstep(src, includes, name, ...): build the program, record Spike's trace, and run
+    the `lockstep` cocotb test (in lockstep.py) against it. Returns (instructions, cycles)."""
+    def run(src, includes, name=None, **build_options):
+        elf, hexfile, tohost = build(src, includes, name, **build_options)
         trace = elf.with_suffix(".trace.json")
         trace.write_text(json.dumps(spike_trace(elf, tohost)))
+        log = elf.with_suffix(".log")
         core_runner.test(
             hdl_toplevel="tb_top",
             test_module="lockstep",
@@ -41,5 +43,8 @@ def run_lockstep(core_runner):
             plusargs=[f"+program={hexfile}"],
             extra_env={"EXPECTED_TRACE": str(trace)},
             results_xml=str(elf.with_suffix(".result.xml")),
+            log_file=log,
         )
+        stats = re.search(r"(\d+) instructions matched Spike in (\d+) cycles", log.read_text())
+        return int(stats[1]), int(stats[2])
     return run

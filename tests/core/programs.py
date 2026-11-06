@@ -12,14 +12,14 @@ CFLAGS = ["-march=rv32im", "-mabi=ilp32", "-nostdlib", "-nostartfiles", "-mno-re
           "-Wl,--no-warn-rwx-segments", "-T", str(ROOT / "sw" / "link.ld")]
 
 
-def build(src, includes, name=None):
+def build(src, includes, name=None, extra_sources=(), extra_flags=()):
     """Assemble/compile one program. Returns (elf path, hex path, tohost address)."""
     BUILD.mkdir(parents=True, exist_ok=True)
     name = name or src.stem
     elf = BUILD / f"{name}.elf"
     include_flags = [flag for inc in includes for flag in ("-I", str(inc))]
-    subprocess.run(["riscv64-unknown-elf-gcc", *CFLAGS, *include_flags, "-o", str(elf), str(src)],
-                   check=True)
+    subprocess.run(["riscv64-unknown-elf-gcc", *CFLAGS, *extra_flags, *include_flags,
+                    "-o", str(elf), *map(str, extra_sources), str(src)], check=True)
 
     binary = BUILD / f"{name}.bin"
     subprocess.run(["riscv64-unknown-elf-objcopy", "-O", "binary", str(elf), str(binary)], check=True)
