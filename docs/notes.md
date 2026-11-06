@@ -571,3 +571,92 @@ rv32ui is now **41 of 42**; only `ma_data` (misaligned accesses) is excluded.
 Because correctness can't depend on the pipeline's depth. A deeper pipeline, a prefetch buffer or
 an instruction cache holds more old instructions; FENCE.I is the contract that says "after this,
 fetch sees all earlier stores", whatever the microarchitecture.
+
+## Stage 2, steps 2-3: the bus, the peripherals and the SoC
+
+### Memory-mapped I/O
+The CPU has no special I/O instructions. Each peripheral owns a range of addresses, and its
+registers are read and written with ordinary loads and stores. Writing a byte to
+`0x1000_0000` sends it out of the UART; reading `0x1000_2004` returns the switch positions.
+In C this is a `volatile` pointer (`sw/lib/soc.h`): `volatile` tells the compiler every access
+really has to happen, in order, because the "memory" has side effects.
+
+### Wishbone
+Wishbone is a simple, open on-chip bus standard (common on OpenCores and in open RISC-V SoCs).
+A master starts a transfer by raising `stb` (strobe) with the address, write enable, byte
+selects (`sel`) and write data; the slave answers with `ack` when the transfer is done, along with
+read data. The master holds everything steady until `ack`. Because a slave can take as long as it
+needs before acking, the bus handles slow and fast devices the same way.
+
+Simplifications in this design: one master (the core), so `cyc` (bus ownership) is folded into
+`stb`; and every peripheral acks one cycle after it's selected.
+
+**The bridge** (`rtl/soc.sv`): when a load or store to a bus address leaves MEM, the bridge
+captures it and drives it on the bus while the instruction waits in WB, freezing the core
+(`dmem_stall`) until the ack. The **interconnect** decodes the address to pick the slave and
+routes back that slave's ack and read data. Unmapped addresses get an ack with 0 from a default
+slave, so a bad pointer can't hang the CPU.
+
+### Tightly coupled memory
+The boot ROM and on-chip RAM are *not* on the bus: they connect to the core directly, with
+single-cycle access and no wait states (ARM calls this TCM). Only slow or rarely used devices go
+on the bus. That's why the Stage 1 CPI numbers still hold for code running from RAM, while each
+peripheral access costs 1 extra cycle.
+
+### The peripherals
+- **UART** (`rtl/wb_uart.sv`): serial port, 8 data bits, no parity, 1 stop bit. Transmitting
+  shifts out a start bit (0), 8 data bits LSB first and a stop bit (1), each held for `divisor`
+  clock cycles (434 at 50 MHz for 115200 baud). Receiving: the input first goes through two
+  flip-flops (a **synchronizer**, because it comes from outside this clock domain and could
+  otherwise cause metastability), then on a falling edge the receiver waits half a bit to reach
+  the middle of the start bit and samples every bit in its middle, where it's most stable. A low
+  glitch shorter than half a bit is rejected. If a byte arrives before the last one was read,
+  the overrun flag is set.
+- **Timer** (`rtl/wb_timer.sv`): a 64-bit cycle counter (it would take ~11,700 years to wrap at
+  50 MHz) and a compare register. Software reads it as high, low, high again, and retries if the
+  high half changed, because the low half may have wrapped between the two reads.
+- **GPIO** (`rtl/wb_gpio.sv`): LEDs, switches, push buttons and the six 7-segment displays. The
+  board's buttons and displays are active-low; the GPIO inverts them, so software always uses
+  1 = pressed / lit. Switches and buttons also go through synchronizers.
+
+### Software
+`sw/lib/`: a driver per peripheral (`uart.c`, `timer.c`, `gpio.c`) and a small `printf`
+(`%c %s %d %u %x %X %p %%`, zero padding and widths). `uart_putc` turns `\n` into `\r\n`,
+because terminals expect a carriage return before the line feed.
+
+**Result** (`tests/soc/test_soc.py`): the whole SoC in simulation, booting from ROM, jumping to a
+C program in RAM, which prints over the UART (decoded back into text by the testbench), reads the
+switches, and drives the LEDs and 7-segment displays. Output:
+
+```
+Hello from rv32im-core!
+fib(30) = 832040, 230 cycles
+switches = 0x155
+printf check: [  -42] [  7] [0000beef] [ok] [Z] [%]
+DONE
+```
+
+### Interview questions
+
+**What is memory-mapped I/O, and why does the C code use `volatile`?**
+Device registers appear at memory addresses and are accessed with normal loads and stores.
+`volatile` stops the compiler from removing, merging or reordering those accesses, which it
+would otherwise do for ordinary memory.
+
+**Why do the UART input and the switches go through two flip-flops?**
+They change at any time, not in step with the clock. A flip-flop sampling a signal as it changes
+can go metastable (neither 0 nor 1 for a while). A second flip-flop gives it a full cycle to
+settle, making a failure extremely unlikely. That's a two-flop synchronizer.
+
+**Why sample UART bits in the middle?**
+The sender's and receiver's clocks aren't exactly the same frequency, so the receiver's idea of
+the bit boundaries drifts over the 10 bits of a frame. Sampling in the middle leaves the most room
+for that drift and for noise around the edges.
+
+**How does a 32-bit CPU read a 64-bit timer safely?**
+Read the high word, the low word, then the high word again. If the two high reads differ, the
+low word wrapped in between; read again.
+
+**Why are RAM and ROM not on the Wishbone bus?**
+Every instruction fetch and most loads and stores use them, so they need single-cycle access.
+The bus adds at least one cycle per access; that's fine for a UART but not for main memory.

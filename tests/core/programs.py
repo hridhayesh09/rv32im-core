@@ -9,16 +9,17 @@ BUILD = ROOT / "build" / "programs"
 BASE_ADDR = 0x80000000
 
 CFLAGS = ["-march=rv32im_zifencei", "-mabi=ilp32", "-nostdlib", "-nostartfiles", "-mno-relax",
-          "-Wl,--no-warn-rwx-segments", "-T", str(ROOT / "sw" / "link.ld")]
+          "-Wl,--no-warn-rwx-segments"]
 
 
-def build(src, includes, name=None, extra_sources=(), extra_flags=()):
-    """Assemble/compile one program. Returns (elf path, hex path, tohost address)."""
+def build(src, includes, name=None, extra_sources=(), extra_flags=(),
+          linker_script=ROOT / "sw" / "link.ld"):
+    """Assemble/compile one program. Returns (elf path, hex path, tohost address or None)."""
     BUILD.mkdir(parents=True, exist_ok=True)
     name = name or src.stem
     elf = BUILD / f"{name}.elf"
     include_flags = [flag for inc in includes for flag in ("-I", str(inc))]
-    subprocess.run(["riscv64-unknown-elf-gcc", *CFLAGS, *extra_flags, *include_flags,
+    subprocess.run(["riscv64-unknown-elf-gcc", *CFLAGS, "-T", str(linker_script), *extra_flags, *include_flags,
                     "-o", str(elf), *map(str, extra_sources), str(src)], check=True)
 
     binary = BUILD / f"{name}.bin"
@@ -31,8 +32,8 @@ def build(src, includes, name=None, extra_sources=(), extra_flags=()):
 
     symbols = subprocess.run(["riscv64-unknown-elf-nm", str(elf)], check=True,
                              capture_output=True, text=True).stdout
-    tohost = next(int(line.split()[0], 16) for line in symbols.splitlines()
-                  if line.endswith(" tohost"))
+    tohost = next((int(line.split()[0], 16) for line in symbols.splitlines()
+                   if line.endswith(" tohost")), None)
     return elf, hexfile, tohost
 
 
