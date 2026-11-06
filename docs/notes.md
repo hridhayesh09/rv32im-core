@@ -737,3 +737,51 @@ The number of clock cycles between a READ command and the first data on the pins
 Against a model of the chip that implements the datasheet's rules and counts violations, with
 random traffic and long idle periods, then end to end from C code on the CPU. Planted bugs
 (refresh too slow, sampling too early) were caught.
+
+## Stage 2, step 5: the UART bootloader
+
+Without a bootloader, running a new program means putting it into the FPGA's memory
+initialization and rebuilding the whole FPGA image (minutes in Quartus). The bootloader lives in
+the boot ROM, so it's the first thing that runs after reset. It waits for a program over the
+serial port, stores it in on-chip RAM, checks it, and jumps to it.
+
+**Protocol** (`sw/boot/bootloader.c`, host side `tools/upload.py`), numbers little-endian:
+1. The board prints `ready`.
+2. The host sends `BOOT`, the program's length (4 bytes), the program bytes, and a CRC-32 of the
+   program (4 bytes).
+3. The board answers `OK` and runs the program, or `ERR size` / `ERR crc` and waits again.
+4. Sending just `R` reruns the program already in RAM (after pressing reset).
+
+Details worth knowing:
+- **CRC-32** (the same as zlib, Ethernet and PNG) catches corrupted bytes much better than a
+  simple sum. It's computed after all bytes arrived, so the receive loop stays tiny: the UART
+  holds only one byte, and a slow loop would drop bytes (overrun).
+- **FENCE.I before jumping:** the program was written with stores, so fetch must be told to see
+  them (see the FENCE.I section).
+- **Memory layout:** the bootloader's code is in ROM; its variables and stack are at the top of
+  RAM (from `0x8000_C000`), so programs up to 48 KB can be loaded at `0x8000_0000` without
+  overwriting the bootloader while it runs.
+- **Size: 996 bytes** of the 8 KB ROM.
+
+**Test** (`tests/soc/test_soc.py::bootloader`): the real boot ROM in the SoC simulation. The test
+waits for `ready`, sends a copy of the hello program with one byte flipped (the board must answer
+`ERR crc` and become ready again), then the correct 2,708-byte program, which must run and print
+its output.
+
+`make sw` builds `build/sw/bootrom.hex` (the boot ROM image for Quartus) and a `.bin` of every
+program in `sw/soc/` to send with `tools/upload.py`.
+
+### Interview questions
+
+**Why a bootloader instead of rebuilding the FPGA image?**
+Rebuilding takes minutes; uploading over the UART takes about a quarter second for a small program.
+It's also how real systems work: a small fixed boot ROM loads the real program from somewhere else
+(flash, network, serial).
+
+**Why CRC instead of a checksum?**
+A sum misses errors that cancel out (one byte +1, another −1) or reordered bytes. A CRC detects all
+single-bit errors, all burst errors up to 32 bits, and almost everything else.
+
+**What happens if the bootloader is too slow to read a byte before the next arrives?**
+The UART holds one received byte; the next one overwrites it and sets the overrun flag. That's why
+the receive loop does nothing but read and store, and the CRC is computed afterwards.

@@ -1,8 +1,9 @@
-.PHONY: help check-tools test clean
+.PHONY: help check-tools test sw clean
 
 help:
 	@echo "make check-tools   print the version of every required tool"
 	@echo "make test          run all tests"
+	@echo "make sw            build the boot ROM image and uploadable programs (build/sw)"
 	@echo "make clean         remove build output"
 
 # Fails on the first missing tool, so a clean run means the setup is complete.
@@ -19,6 +20,9 @@ check-tools:
 
 test:
 	python3 -m pytest -v tests
+
+sw:
+	python3 tools/build_sw.py
 
 clean:
 	rm -rf build

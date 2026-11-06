@@ -35,6 +35,11 @@ def build_bootrom(src, extra_sources=()):
     return hexfile
 
 
+def build_bootloader():
+    return build_bootrom(SW / "boot" / "bootloader.c",
+                         extra_sources=[SW / "boot" / "start.S", SW / "lib" / "uart.c"])
+
+
 def build_soc():
     from cocotb_tools.runner import get_runner
     runner = get_runner("verilator")
@@ -47,6 +52,14 @@ def build_soc():
         always=True,
     )
     return runner
+
+
+async def uart_send(dut, data):
+    """Drive bytes into dut.rxd: start bit, 8 data bits LSB first, stop bit."""
+    for byte in data:
+        for bit in [0] + [(byte >> i) & 1 for i in range(8)] + [1]:
+            dut.rxd.value = bit
+            await ClockCycles(dut.clk, UART_DIVISOR)
 
 
 async def uart_monitor(dut, received):

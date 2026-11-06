@@ -1,6 +1,9 @@
 """The whole SoC in simulation (tb_soc: the SoC plus a model of the SDRAM chip). The boot ROM
 jumps to a C program in RAM; the test reads its output from the UART pin."""
 
+import os
+import struct
+import zlib
 from pathlib import Path
 
 import cocotb
@@ -8,7 +11,8 @@ import pytest
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles
 
-from soc_sim import SW, build_bootrom, build_program, build_soc, uart_monitor
+from soc_sim import (SW, build_bootloader, build_bootrom, build_program, build_soc,
+                     uart_monitor, uart_send)
 
 HERE = Path(__file__).resolve().parent
 SEGMENTS = [0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07,
@@ -59,6 +63,46 @@ async def sdram(dut):
     dut._log.info(f"{int(dut.sdram_refreshes.value)} SDRAM refreshes, 0 violations")
 
 
+@cocotb.test()
+async def bootloader(dut):
+    """The real boot ROM: wait for 'ready', send hello.bin over the UART like tools/upload.py,
+    and the program must run."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    dut.rxd.value = 1
+    dut.sw.value = 0x155
+    dut.key_n.value = 0b11
+    dut.rst.value = 1
+    await ClockCycles(dut.clk, 3)
+    dut.rst.value = 0
+    received = []
+    cocotb.start_soon(uart_monitor(dut, received))
+    while b"ready" not in bytes(received):
+        await ClockCycles(dut.clk, 1000)
+
+    image = Path(os.environ["PROGRAM_BIN"]).read_bytes()
+    packet = b"BOOT" + struct.pack("<I", len(image)) + image + struct.pack("<I", zlib.crc32(image))
+
+    # First a copy with one byte flipped: it must be rejected, and the board must be ready again.
+    corrupted = bytearray(packet)
+    corrupted[100] ^= 0x01
+    await uart_send(dut, corrupted)
+    while bytes(received).count(b"ready") < 2:
+        await ClockCycles(dut.clk, 1000)
+    assert b"ERR crc" in bytes(received)
+
+    await uart_send(dut, packet)
+    for _ in range(1000):
+        await ClockCycles(dut.clk, 1000)
+        if b"DONE" in bytes(received):
+            break
+    text = bytes(received).decode()
+    for line in text.splitlines():
+        dut._log.info(f"uart: {line}")
+    assert "OK\r\nstarting program\r\nHello from rv32im-core!" in text
+    assert text.endswith("DONE\r\n")
+    dut._log.info(f"uploaded {len(image)} bytes")
+
+
 @pytest.fixture(scope="module")
 def soc_runner():
     return build_soc()
@@ -75,4 +119,18 @@ def test_soc(soc_runner, program):
         test_dir=HERE,
         plusargs=[f"+bootrom={bootrom}", f"+program={hexfile}"],
         results_xml=str(hexfile.with_suffix(".result.xml")),
+    )
+
+
+def test_bootloader(soc_runner):
+    bootrom = build_bootloader()
+    hexfile = build_program(SW / "soc" / "hello.c")
+    soc_runner.test(
+        hdl_toplevel="tb_soc",
+        test_module="test_soc",
+        testcase="bootloader",
+        test_dir=HERE,
+        plusargs=[f"+bootrom={bootrom}"],   # RAM starts empty: the program comes over the UART
+        extra_env={"PROGRAM_BIN": str(hexfile.with_suffix(".bin"))},
+        results_xml=str(bootrom.with_suffix(".result.xml")),
     )
