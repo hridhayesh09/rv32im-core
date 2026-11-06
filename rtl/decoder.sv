@@ -116,14 +116,14 @@ module decoder
                 branch    = 1'b1;
                 uses_rs1  = 1'b1;
                 uses_rs2  = 1'b1;
-                illegal   = funct3 inside {3'b010, 3'b011};
+                illegal   = funct3 == 3'b010 || funct3 == 3'b011;
             end
             OP_LOAD: begin                      // rd = mem[rs1 + imm]
                 mem_read  = 1'b1;
                 wb_sel    = WB_MEM;
                 writes_rd = 1'b1;
                 uses_rs1  = 1'b1;
-                illegal   = !(funct3 inside {3'b000, 3'b001, 3'b010, 3'b100, 3'b101});
+                illegal   = funct3 == 3'b011 || funct3 == 3'b110 || funct3 == 3'b111;
             end
             OP_STORE: begin                     // mem[rs1 + imm] = rs2
                 imm       = imm_s;
@@ -137,7 +137,7 @@ module decoder
                 writes_rd = 1'b1;
                 uses_rs1  = 1'b1;
                 if (funct3 == 3'b001)      illegal = funct7 != 7'b0000000;
-                else if (funct3 == 3'b101) illegal = !(funct7 inside {7'b0000000, 7'b0100000});
+                else if (funct3 == 3'b101) illegal = funct7 != 7'b0000000 && funct7 != 7'b0100000;
             end
             OP_OP: begin                        // rd = rs1 op rs2
                 alu_op    = (funct3 == 3'b000 && instr[30]) ? ALU_SUB : arith_op;
@@ -147,13 +147,13 @@ module decoder
                 uses_rs2  = 1'b1;
                 muldiv    = funct7 == 7'b0000001;   // MUL..REMU, any funct3
                 illegal   = !(funct7 == 7'b0000000 || muldiv ||
-                              (funct7 == 7'b0100000 && funct3 inside {3'b000, 3'b101}));
+                              (funct7 == 7'b0100000 && (funct3 == 3'b000 || funct3 == 3'b101)));
             end
             OP_MISC_MEM: begin
                 // FENCE is a no-op on this in-order core. FENCE.I (Zifencei) makes stores to code
                 // visible to fetch: the core refetches the instructions after it.
                 fence_i   = funct3 == 3'b001;
-                illegal   = !(funct3 inside {3'b000, 3'b001});
+                illegal   = funct3 != 3'b000 && funct3 != 3'b001;
             end
             OP_SYSTEM: begin
                 ecall     = instr == 32'h0000_0073;

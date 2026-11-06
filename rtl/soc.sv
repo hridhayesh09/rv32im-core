@@ -13,8 +13,8 @@
 module soc #(
     parameter logic [31:0] CLK_HZ       = 32'd50_000_000,
     parameter int          UART_DIVISOR = 434,            // CLK_HZ / 115200
-    parameter string       BOOTROM_FILE = "",             // hex images for synthesis
-    parameter string       RAM_FILE     = ""
+    parameter              BOOTROM_FILE = "",             // hex images for synthesis
+    parameter              RAM_FILE     = ""
 ) (
     input  logic        clk,
     input  logic        rst,
@@ -67,7 +67,7 @@ module soc #(
     target_t     fetch_target_q, data_target, data_target_q;
     assign data_target = decode(dmem_addr);
 
-    dpram #(.WORDS(2048), .INIT_FILE(BOOTROM_FILE), .INIT_PLUSARG("bootrom")) u_bootrom (
+    dpram #(.WORDS(2048), .INIT_MIF(BOOTROM_FILE), .INIT_PLUSARG("bootrom")) u_bootrom (
         .clk,
         .a_en    (imem_en && decode(imem_addr) == TARGET_ROM),
         .a_addr  (imem_addr),
@@ -79,7 +79,7 @@ module soc #(
         .b_rdata (rom_b_rdata)
     );
 
-    dpram #(.WORDS(16384), .INIT_FILE(RAM_FILE), .INIT_PLUSARG("program")) u_ram (
+    dpram #(.WORDS(16384), .INIT_MIF(RAM_FILE), .INIT_PLUSARG("program")) u_ram (
         .clk,
         .a_en    (imem_en && decode(imem_addr) == TARGET_RAM),
         .a_addr  (imem_addr),
@@ -103,6 +103,26 @@ module soc #(
     // A bus access is captured when the core sends it (instruction leaving MEM) and driven on
     // the bus while that instruction waits in WB; the core is frozen until the slave acks.
 
+    // Which slave an access goes to is decoded when the request is captured and kept in a
+    // register, so the address decoder isn't on the path from a slave's ack to the core's stall.
+    typedef enum logic [2:0] { SLAVE_UART, SLAVE_TIMER, SLAVE_GPIO, SLAVE_SDRAM, SLAVE_NONE } slave_t;
+
+    function automatic slave_t decode_slave(input logic [31:0] addr);
+        if (addr[31:16] == 16'h1000) begin
+            case (addr[15:12])
+                4'h0:    return SLAVE_UART;
+                4'h1:    return SLAVE_TIMER;
+                4'h2:    return SLAVE_GPIO;
+                default: return SLAVE_NONE;
+            endcase
+        end else if (addr[31:28] == 4'h4) begin
+            return SLAVE_SDRAM;
+        end else begin
+            return SLAVE_NONE;
+        end
+    endfunction
+
+    slave_t      slave;
     logic        bus_stb, bus_we, bus_ack;
     logic [31:0] bus_adr, bus_dat_w, bus_dat_r;
     logic [3:0]  bus_sel;
@@ -116,6 +136,7 @@ module soc #(
             bus_adr   <= dmem_addr;
             bus_dat_w <= dmem_wdata;
             bus_sel   <= (dmem_we != 4'b0000) ? dmem_we : 4'b1111;
+            slave     <= decode_slave(dmem_addr);
         end else if (bus_ack) begin
             bus_stb <= 1'b0;
         end
@@ -133,27 +154,13 @@ module soc #(
 
     // ---------------------------------------------------------------- Wishbone interconnect
 
-    typedef enum logic [2:0] { SLAVE_UART, SLAVE_TIMER, SLAVE_GPIO, SLAVE_SDRAM, SLAVE_NONE } slave_t;
-    slave_t slave;
-    always_comb begin
-        if (bus_adr[31:16] == 16'h1000) begin
-            case (bus_adr[15:12])
-                4'h0:    slave = SLAVE_UART;
-                4'h1:    slave = SLAVE_TIMER;
-                4'h2:    slave = SLAVE_GPIO;
-                default: slave = SLAVE_NONE;
-            endcase
-        end else if (bus_adr[31:28] == 4'h4) begin
-            slave = SLAVE_SDRAM;
-        end else begin
-            slave = SLAVE_NONE;
-        end
-    end
+    localparam logic [15:0] UART_DIVISOR_16 = UART_DIVISOR[15:0];
+
 
     logic [31:0] uart_dat_r, timer_dat_r, gpio_dat_r, sdram_dat_r;
     logic        uart_ack, timer_ack, gpio_ack, sdram_ack, none_ack;
 
-    wb_uart #(.DEFAULT_DIVISOR(16'(UART_DIVISOR))) u_uart (
+    wb_uart #(.DEFAULT_DIVISOR(UART_DIVISOR_16)) u_uart (
         .clk, .rst,
         .wb_stb   (bus_stb && slave == SLAVE_UART),
         .wb_we    (bus_we),

@@ -68,7 +68,7 @@ module sdram_ctrl #(
     logic [3:0]  init_refreshes;
     logic [15:0] refresh_count;
     logic        refresh_due, refresh_tick;
-    assign refresh_tick = refresh_count == 16'(REFRESH_CYCLES - 1);
+    assign refresh_tick = refresh_count == REFRESH_LAST;
 
     // Power-up value NOP: before the first reset edge an all-zero register would be LOAD MODE.
     // FPGA registers take this initial value when the device is configured.
@@ -90,10 +90,22 @@ module sdram_ctrl #(
     localparam int READ_RECOVERY  = T_RP + 1;
     localparam int WRITE_RECOVERY = 2 + T_RP;
 
+    // The same numbers as 16-bit values for the delay counter.
+    localparam int REFRESH_LAST_INT = REFRESH_CYCLES - 1;
+    localparam int READ_DELAY_INT   = READ_LATENCY - 1;
+    localparam logic [15:0] INIT_DELAY          = INIT_CYCLES[15:0];
+    localparam logic [15:0] REFRESH_LAST        = REFRESH_LAST_INT[15:0];
+    localparam logic [15:0] RP_DELAY            = T_RP[15:0];
+    localparam logic [15:0] RFC_DELAY           = T_RFC[15:0];
+    localparam logic [15:0] MRD_DELAY           = T_MRD[15:0];
+    localparam logic [15:0] READ_DELAY          = READ_DELAY_INT[15:0];
+    localparam logic [15:0] WRITE_DELAY         = WRITE_RECOVERY[15:0];
+    localparam logic [15:0] READ_RECOVERY_DELAY = READ_RECOVERY[15:0];
+
     always_ff @(posedge clk) begin
         if (rst) begin
             state          <= S_INIT_WAIT;
-            delay          <= 16'(INIT_CYCLES);
+            delay          <= INIT_DELAY;
             cmd            <= CMD_NOP;
             sdram_dq_oe    <= 1'b0;
             sdram_dqm      <= 2'b11;
@@ -122,14 +134,14 @@ module sdram_ctrl #(
                 S_INIT_PRECHARGE: begin
                     cmd         <= CMD_PRECHARGE;
                     sdram_addr  <= 13'b0_0100_0000_0000;   // A10 = 1: all banks
-                    delay       <= 16'(T_RP);
+                    delay       <= RP_DELAY;
                     after_delay <= S_INIT_REFRESH;
                     state       <= S_DELAY;
                 end
                 S_INIT_REFRESH: begin
                     cmd            <= CMD_REFRESH;
                     init_refreshes <= init_refreshes + 4'd1;
-                    delay          <= 16'(T_RFC);
+                    delay          <= RFC_DELAY;
                     after_delay    <= (init_refreshes == 4'd7) ? S_INIT_MODE : S_INIT_REFRESH;
                     state          <= S_DELAY;
                 end
@@ -137,7 +149,7 @@ module sdram_ctrl #(
                     cmd         <= CMD_LOAD_MODE;
                     sdram_ba    <= 2'b00;
                     sdram_addr  <= MODE;
-                    delay       <= 16'(T_MRD);
+                    delay       <= MRD_DELAY;
                     after_delay <= S_IDLE;
                     state       <= S_DELAY;
                 end
@@ -159,7 +171,7 @@ module sdram_ctrl #(
                 S_REFRESH: begin
                     cmd         <= CMD_REFRESH;
                     refresh_due <= refresh_tick;   // don't lose a tick that lands right now
-                    delay       <= 16'(T_RFC);
+                    delay       <= RFC_DELAY;
                     after_delay <= S_IDLE;
                     state       <= S_DELAY;
                 end
@@ -179,7 +191,7 @@ module sdram_ctrl #(
                         state        <= S_WRITE_HIGH;
                     end else begin
                         sdram_dqm    <= 2'b00;
-                        delay        <= 16'(READ_LATENCY - 1);
+                        delay        <= READ_DELAY;
                         state        <= S_READ_WAIT;
                     end
                 end
@@ -188,7 +200,7 @@ module sdram_ctrl #(
                     sdram_dqm    <= ~req_sel[3:2];
                     sdram_dq_oe  <= 1'b1;
                     wb_ack       <= 1'b1;
-                    delay        <= 16'(WRITE_RECOVERY);
+                    delay        <= WRITE_DELAY;
                     after_delay  <= S_IDLE;
                     state        <= S_DELAY;
                 end
@@ -203,7 +215,7 @@ module sdram_ctrl #(
                 S_READ_HIGH: begin
                     wb_dat_r[31:16] <= sdram_dq_in;
                     wb_ack          <= 1'b1;
-                    delay           <= 16'(READ_RECOVERY);
+                    delay           <= READ_RECOVERY_DELAY;
                     after_delay     <= S_IDLE;
                     state           <= S_DELAY;
                 end

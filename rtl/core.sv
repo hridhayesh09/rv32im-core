@@ -72,7 +72,7 @@ module core
         logic        branch;
         logic        jal;
         logic        jalr;
-        logic        muldiv;
+        logic        is_muldiv;   // (not "muldiv": Quartus confuses it with the module name)
         logic        fence_i;
         logic        trap;
     } id_ex_t;
@@ -228,7 +228,7 @@ module core
                 branch:    branch_d,
                 jal:       jal_d,
                 jalr:      jalr_d,
-                muldiv:    muldiv_d,
+                is_muldiv: muldiv_d,
                 fence_i:   fence_i_d,
                 trap:      illegal_d || ecall_d || ebreak_d
             };
@@ -284,7 +284,7 @@ module core
     muldiv u_muldiv (
         .clk    (clk),
         .rst    (rst),
-        .start  (e.valid && e.muldiv && !md_done && !freeze),
+        .start  (e.valid && e.is_muldiv && !md_done && !freeze),
         .hold   (freeze),
         .op     (e.funct3),
         .a      (rs1_e),
@@ -293,10 +293,10 @@ module core
         .result (md_result)
     );
 
-    assign stall_e = e.valid && e.muldiv && !md_done;
+    assign stall_e = e.valid && e.is_muldiv && !md_done;
 
     logic [31:0] target_e;
-    assign target_e    = ((e.jalr ? rs1_e : e.pc) + e.imm) & ~32'(e.jalr);  // JALR clears bit 0
+    assign target_e    = ((e.jalr ? rs1_e : e.pc) + e.imm) & {31'h7fff_ffff, !e.jalr};  // JALR clears bit 0
     // FENCE.I redirects to the next instruction: the 2 younger instructions, fetched before an
     // older store to code finished, are flushed and fetched again.
     assign redirect    = e.valid && (e.jal || e.jalr || e.fence_i ||
@@ -315,7 +315,7 @@ module core
                 valid:      e.valid,
                 pc:         e.pc,
                 instr:      e.instr,
-                result:     e.muldiv ? md_result : (e.wb_sel == WB_PC4) ? e.pc + 32'd4 : alu_y,
+                result:     e.is_muldiv ? md_result : (e.wb_sel == WB_PC4) ? e.pc + 32'd4 : alu_y,
                 store_data: rs2_e,
                 rd:         e.rd,
                 funct3:     e.funct3,

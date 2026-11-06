@@ -29,8 +29,10 @@ module wb_gpio (
     logic       access;
     assign access = wb_stb && !wb_ack;
 
-    logic [2:0] hex_idx;   // which display, for addresses +0x10..+0x24
-    assign hex_idx = 3'(wb_adr[5:2] - 4'd4);
+    logic [3:0] hex_offset;   // which display, for addresses +0x10..+0x24
+    logic [2:0] hex_idx;
+    assign hex_offset = wb_adr[5:2] - 4'd4;
+    assign hex_idx    = hex_offset[2:0];
 
     // Switches and buttons are asynchronous inputs: two flip-flops each before use.
     always_ff @(posedge clk) begin

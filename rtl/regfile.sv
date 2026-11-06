@@ -18,12 +18,17 @@ module regfile (
         if (we && rd_addr != 5'd0) regs[rd_addr] <= rd_data;
     end
 
-    function automatic logic [31:0] read(input logic [4:0] addr);
-        if (addr == 5'd0)               return '0;
-        else if (we && rd_addr == addr) return rd_data;
-        else                            return regs[addr];
-    endfunction
+    // Reads are written out per port (not through a shared function): Quartus didn't treat a
+    // memory read inside a function as a use of the memory and removed the registers.
+    always_comb begin
+        if (rs1_addr == 5'd0)                rs1_data = '0;
+        else if (we && rd_addr == rs1_addr)  rs1_data = rd_data;
+        else                                 rs1_data = regs[rs1_addr];
+    end
 
-    assign rs1_data = read(rs1_addr);
-    assign rs2_data = read(rs2_addr);
+    always_comb begin
+        if (rs2_addr == 5'd0)                rs2_data = '0;
+        else if (we && rd_addr == rs2_addr)  rs2_data = rd_data;
+        else                                 rs2_data = regs[rs2_addr];
+    end
 endmodule

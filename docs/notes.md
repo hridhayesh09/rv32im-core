@@ -785,3 +785,69 @@ single-bit errors, all burst errors up to 32 bits, and almost everything else.
 **What happens if the bootloader is too slow to read a byte before the next arrives?**
 The UART holds one received byte; the next one overwrites it and sets the overrun flag. That's why
 the receive loop does nothing but read and store, and the CRC is computed afterwards.
+
+## Stage 2, step 6: building for the FPGA
+
+`fpga/de10lite/` is the Quartus project: a top level (`de10lite_top.sv`) that connects the SoC to
+the board's pins, the pin assignments (copied from `edge-ml-accelerator/boardtest`, which ran on
+this board), timing constraints, and the SDRAM clocking scheme from that same tested design
+(SDRAM clock = inverted system clock; read data sampled 60 ns after READ, in the middle of the
+50-70 ns window that was clean on this board).
+
+### What the first real compile found (none of it visible in simulation)
+1. **Quartus Lite accepts less SystemVerilog than Verilator.** The `inside` operator, size casts
+   like `16'(x)`, and a struct field named like a module (`muldiv`) were rejected. Rewritten in
+   forms both tools accept.
+2. **The register file was about to be deleted.** Its reads went through a function, and Quartus
+   decided the registers were "never read". Rewritten with plain `always_comb` reads.
+3. **The memories weren't block RAM.** First Quartus tried to build 72 KB out of flip-flops (it
+   would never fit, and synthesis ran for 40+ minutes); then, after a rewrite, it built each
+   dual-port memory **twice** (one copy per read port). Fixed by instantiating Intel's block-RAM
+   primitive (`altsyncram`, true dual-port, byte enables) for the FPGA build, with the simple
+   behavioural model kept for simulation. The boot ROM's contents go in as a `.mif` file
+   (`make sw`).
+4. **Timing was barely met** (+0.012 ns of slack at 50 MHz): the slowest path went from the bus
+   address, through the decoder that picks the peripheral, the acknowledge, and the pipeline
+   freeze, into the PC. Decoding the peripheral when the request is captured (and keeping it in a
+   register) took the decoder off that path.
+
+### Results (Quartus Prime Lite 25.1, 10M50DAF484C7G)
+
+| Resource | Used | Available | |
+|---|---|---|---|
+| Logic elements | 4,626 | 49,760 | 9 % |
+| Registers | 2,167 | | |
+| Memory bits | 589,824 | 1,677,312 | 35 % |
+| 9-bit hardware multipliers | 8 | 288 | 3 % |
+
+Timing at 50 MHz, worst case (slow silicon, 85 °C): **setup slack +1.875 ns, hold slack
++0.286 ns, Fmax 55.17 MHz**. The slowest path is now inside the core: data-memory read → load
+extend → forwarding → EX.
+
+**For Stage 4:** the 16x16 systolic array used about 62% of the logic on its own. The SoC uses 9%,
+so the two together should fit in logic. Memory (35% used) and multipliers (3% used) also leave
+room, but the VGA framebuffer in Stage 3 will take some of the memory. The real check is a
+combined Quartus fit, early in Stage 4.
+
+**Not covered by simulation:** the FPGA build uses `altsyncram`, while Verilator simulates the
+behavioural model of the same memory. If the board doesn't print the bootloader banner, that
+difference is a suspect (Questa, installed with Quartus, can simulate the real primitive).
+
+### Interview questions
+
+**Why didn't your simulations catch these problems?**
+Simulation checks behaviour, not how a synthesis tool maps the code onto the chip. Language
+support, memory inference and timing are synthesis questions, which is why you compile for the
+real target early and read the reports, not just whether it compiled.
+
+**What is RAM inference, and why didn't it work?**
+Synthesis tools recognize certain coding patterns as memories and map them onto block RAM. If the
+code doesn't match a pattern the tool knows (here: a dual-port memory with one read-only port and
+byte-enabled writes on the other), it either builds the memory from flip-flops or splits it.
+Instantiating the vendor's primitive removes the guesswork, at the cost of vendor-specific code.
+
+**How did you fix your critical path?**
+The timing report showed the slowest path started at the bus address and went through the slave
+decoder in the same cycle as the acknowledge. I moved the decode to the cycle the request is
+captured and registered it, which removed that logic from the path: slack went from +0.012 ns to
++1.875 ns.
