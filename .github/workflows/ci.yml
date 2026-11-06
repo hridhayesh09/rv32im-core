@@ -1,0 +1,67 @@
+name: CI
+
+on: [push, pull_request]
+
+env:
+  VERILATOR_VERSION: v5.036
+  SPIKE_COMMIT: f90d5af53f50b0feec7a7cbcb4411e1e0410c465
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf flex bison help2man perl \
+            ccache libfl2 libfl-dev zlib1g-dev libgoogle-perftools-dev numactl \
+            device-tree-compiler libboost-regex-dev libboost-system-dev \
+            gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf
+
+      # Verilator and Spike take a long time to build, so they are built once and cached.
+      - name: Cache Verilator and Spike
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/tools
+          key: tools-ubuntu24-verilator-${{ env.VERILATOR_VERSION }}-spike-${{ env.SPIKE_COMMIT }}
+
+      - name: Build Verilator
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/verilator/verilator /tmp/verilator-src
+          cd /tmp/verilator-src
+          git checkout "$VERILATOR_VERSION"
+          autoconf
+          ./configure --prefix=$HOME/tools/verilator
+          make -j$(nproc)
+          make install
+
+      - name: Build Spike
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/riscv-software-src/riscv-isa-sim /tmp/spike-src
+          cd /tmp/spike-src
+          git checkout "$SPIKE_COMMIT"
+          git submodule update --init --recursive
+          mkdir build && cd build
+          ../configure --prefix=$HOME/tools/spike
+          make -j$(nproc)
+          make install
+
+      - name: Add tools to PATH
+        run: |
+          echo "$HOME/tools/verilator/bin" >> "$GITHUB_PATH"
+          echo "$HOME/tools/spike/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python packages
+        run: pip install "cocotb~=2.0" pytest numpy
+
+      - run: make check-tools
+      - run: make test

@@ -1,0 +1,24 @@
+# Simulation and build output
+build/
+obj_dir/
+sim_build/
+*.vcd
+*.fst
+results.xml
+*.result.xml
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Compiled software
+*.o
+*.elf
+*.bin
+*.hex
+*.dump
+
+# Quartus output (from Stage 2)
+db/
+incremental_db/
+output_files/
+*.qws
