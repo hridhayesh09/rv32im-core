@@ -354,8 +354,16 @@ module core
 
     // ---------------------------------------------------------------- hazard control
 
-    assign stall_f = 1'b0;
-    assign stall_d = 1'b0;
+    // Load-use: the instruction in ID needs the result of a load that is in EX. The data only
+    // arrives when the load is in WB, so hold IF and ID for one cycle and put a bubble into EX.
+    // After that cycle the load is in MEM; when the consumer then moves into EX, the load is in
+    // WB and forwarding supplies the value.
+    logic load_use;
+    assign load_use = e.valid && e.mem_read && e.reg_write && d.valid &&
+                      ((uses_rs1_d && rs1_d == e.rd) || (uses_rs2_d && rs2_d == e.rd));
+
+    assign stall_f = load_use;
+    assign stall_d = load_use;
     assign flush_d = redirect;   // the instruction being fetched is on the wrong path
     assign flush_e = redirect;   // so is the one in ID
 

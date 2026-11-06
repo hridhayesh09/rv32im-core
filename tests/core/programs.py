@@ -43,8 +43,12 @@ def spike_trace(elf, tohost, isa="rv32i"):
     """Run the program on Spike and return its retired instructions, up to and including
     the store to tohost. Each entry: pc, insn, rd, rd_wdata, mem (None, "load" or "store"),
     mem_addr, store_data, store_bytes."""
-    proc = subprocess.run(["spike", f"--isa={isa}", "--log-commits", str(elf)],
-                          capture_output=True, text=True, timeout=60)
+    try:
+        proc = subprocess.run(["spike", f"--isa={isa}", "--log-commits", str(elf)],
+                              capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{elf.name}: Spike still running after 60 s; "
+                           "the program probably never writes tohost") from None
     trace = []
     for line in proc.stderr.splitlines():
         match = _LINE.match(line)
