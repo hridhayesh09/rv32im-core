@@ -16,7 +16,8 @@ C_FLAGS = ["-O2", "-ffreestanding", "-fno-builtin", "-Wall", "-Werror"]
 UART_DIVISOR = 8   # clock cycles per bit in simulation (the board uses 434 for 115200 baud)
 
 RTL_SOURCES = ["rv_pkg.sv", "alu.sv", "regfile.sv", "decoder.sv", "muldiv.sv", "dpram.sv",
-               "core.sv", "wb_uart.sv", "wb_timer.sv", "wb_gpio.sv", "soc.sv"]
+               "core.sv", "wb_uart.sv", "wb_timer.sv", "wb_gpio.sv", "sdram_ctrl.sv", "soc.sv"]
+TB_SOURCES = ["sdram_model.sv", "tb_soc.sv"]
 
 
 def build_program(src):
@@ -38,9 +39,9 @@ def build_soc():
     from cocotb_tools.runner import get_runner
     runner = get_runner("verilator")
     runner.build(
-        sources=[ROOT / "rtl" / f for f in RTL_SOURCES],
-        hdl_toplevel="soc",
-        build_dir=ROOT / "build" / "soc",
+        sources=[ROOT / "rtl" / f for f in RTL_SOURCES] + [ROOT / "tb" / f for f in TB_SOURCES],
+        hdl_toplevel="tb_soc",
+        build_dir=ROOT / "build" / "tb_soc",
         build_args=["-Wall"],
         parameters={"UART_DIVISOR": UART_DIVISOR},
         always=True,

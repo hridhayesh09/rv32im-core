@@ -660,3 +660,80 @@ low word wrapped in between; read again.
 **Why are RAM and ROM not on the Wishbone bus?**
 Every instruction fetch and most loads and stores use them, so they need single-cycle access.
 The bus adds at least one cycle per access; that's fine for a UART but not for main memory.
+
+## Stage 2, step 4: the SDRAM controller
+
+The board has a 64 MB SDRAM chip (IS42S16320: 4 banks × 8192 rows × 1024 columns × 16 bits).
+SDRAM is cheap and dense, but much more complicated to use than on-chip RAM:
+
+- **Rows and banks.** Data is in rows. To read or write, a row must first be **opened**
+  (ACTIVE command, which copies the row into the bank's row buffer), then accessed with READ or
+  WRITE (by column), then **closed** (PRECHARGE) before another row in that bank can be opened.
+- **Timing rules.** Each step needs a minimum time before the next: open → access (tRCD,
+  15 ns), close → reopen (tRP, 15 ns), open → open again (tRC, 60 ns), last write → close (write
+  recovery), and so on.
+- **CAS latency.** Read data comes back 2 clock cycles after the READ command (configurable).
+- **Refresh.** The bits are tiny capacitors that leak. Every row must be refreshed every 64 ms:
+  8192 rows means one REFRESH command at least every 7.8 µs, even when nobody uses the memory.
+- **Power-up sequence.** Wait 100 µs, precharge all banks, at least 2 refreshes, then program
+  the mode register (burst length, CAS latency).
+
+### The controller (`rtl/sdram_ctrl.sv`)
+A state machine behind a Wishbone interface. Design choices:
+- **One 32-bit word = a burst of 2.** The chip is 16 bits wide, so the mode register sets burst
+  length 2: one READ or WRITE command moves two halfwords on consecutive cycles. The byte masks
+  (DQM pins) handle byte and halfword stores.
+- **Closed page.** Every access opens its row, reads or writes with auto-precharge (the chip
+  closes the row by itself after the burst), and waits out the recovery time. That's the simplest
+  correct policy. "Open page" (leave the row open, and skip ACTIVE when the next access hits the
+  same row) is faster for sequential accesses and is a natural Stage 5 experiment.
+- **Refresh** is triggered by a counter every 380 cycles (7.6 µs at 50 MHz) and done between
+  accesses.
+- **Address mapping:** bits [10:2] column, [12:11] bank, [25:13] row, so consecutive words share a
+  row.
+
+### The chip model (`tb/sdram_model.sv`)
+A testbench-only model of the chip that stores data and **checks every rule**: power-up wait,
+init order, opening an already-open bank, accessing a closed bank, tRCD, tRAS, tRC, tRP, write
+recovery, tRFC, tMRD, the refresh interval, and bus fights on the data pins. Each broken rule
+prints a message and counts as a violation; tests require zero.
+
+On its first run it found a real hardware bug: before reset takes effect, the controller's
+command register is all zeros, and all-zeros is the LOAD MODE command. On the board that would
+have sent a garbage mode-register write at power-up. Fix: the register gets a power-up value of
+NOP (FPGA registers take initial values when the device is configured).
+
+Two planted bugs were caught: a refresh interval too long (450 cycles, the model flags every
+interval over 391) and sampling read data one cycle too early (wrong data).
+
+### Results
+- Unit test against the model: 3,000 random reads/writes with random byte masks across the
+  whole 64 MB, 69 refreshes, 0 violations; and 1 ms idle with the controller refreshing on its own.
+- From the CPU, in the SoC simulation (`sw/soc/sdram_test.c`): address-line test, random words,
+  bytes and halfwords, and a timed copy: **256 words took 2,855 cycles to write and 3,615 to read**
+  (about 11 and 14 cycles per word including the loop; on-chip RAM is about 1). 109 refreshes,
+  0 violations.
+
+**Not checked in simulation, to verify on the board:** the real chip needs its clock shifted
+relative to the controller's (a PLL output with a phase offset), and the exact cycle to sample
+read data depends on board delays (`READ_LATENCY`). Those are board bring-up items.
+
+### Interview questions
+
+**Why does SDRAM need refresh?**
+Each bit is a charge on a tiny capacitor, which leaks. Reading a row and writing it back
+(refresh) restores the charge; every row must be refreshed within 64 ms.
+
+**What's the difference between open-page and closed-page policies?**
+Closed page precharges after every access: each access pays ACTIVE + access + precharge, but
+never pays to close someone else's row. Open page leaves the row open, so a following access to
+the same row skips ACTIVE (a row hit), but a different row first needs a precharge (a row miss).
+Open page wins for sequential/local accesses.
+
+**What is CAS latency?**
+The number of clock cycles between a READ command and the first data on the pins.
+
+**How did you verify the controller without the board?**
+Against a model of the chip that implements the datasheet's rules and counts violations, with
+random traffic and long idle periods, then end to end from C code on the CPU. Planted bugs
+(refresh too slow, sampling too early) were caught.
