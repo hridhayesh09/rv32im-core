@@ -547,3 +547,27 @@ independent later instructions continue, at a big cost in complexity.
 By injecting random wait states into every data access and rerunning all the lockstep tests:
 correct results with random timing means the stall logic works at any timing, not just the cases
 I thought of.
+
+## Stage 2: one RAM for code and data, and FENCE.I
+
+In Stage 1 the testbench had separate instruction and data memories, so the official `fence_i`
+test (which writes new code and then runs it) had to be excluded. The SoC design puts code and
+data in **one dual-port RAM** (`rtl/dpram.sv`): port A for fetch, port B for loads and stores,
+the same shape as an FPGA block RAM in true dual-port mode. A store through port B is visible to
+fetch through port A.
+
+That leaves one problem: instructions already fetched before the store finished. **FENCE.I** now
+handles it: in EX it redirects to the next instruction, like a jump to PC+4, which flushes the 2
+younger instructions and fetches them again from memory.
+
+Testing: the official `fence_i` test passes now, but it would pass even without the flush: its
+new code runs long after the store, and this pipeline only fetches 2 instructions ahead.
+`tests/asm/fence_i.S` overwrites the instruction *right after* the FENCE.I; it passes with the
+flush and fails without it.
+
+rv32ui is now **41 of 42**; only `ma_data` (misaligned accesses) is excluded.
+
+**Interview question: why does FENCE.I exist if your test passed without it?**
+Because correctness can't depend on the pipeline's depth. A deeper pipeline, a prefetch buffer or
+an instruction cache holds more old instructions; FENCE.I is the contract that says "after this,
+fetch sees all earlier stores", whatever the microarchitecture.

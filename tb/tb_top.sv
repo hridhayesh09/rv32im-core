@@ -1,5 +1,5 @@
-// Simulation top: the core with separate instruction and data RAMs, both loaded from the
-// same program image (+program=<hex file>). The retire trace is brought out as ports.
+// Simulation top: the core with one dual-port RAM for code and data (as in the SoC), loaded
+// from a program image (+program=<hex file>). The retire trace is brought out as ports.
 //
 // +random_stalls makes data accesses take a random number of extra cycles (like a slow bus
 // device), to test the core's wait-state handling with every program.
@@ -23,22 +23,16 @@ module tb_top (
 
     core u_core (.*);
 
-    ram #(.INIT_PLUSARG("program")) u_imem (
-        .clk   (clk),
-        .en    (imem_en),
-        .we    (4'b0000),
-        .addr  (imem_addr),
-        .wdata ('0),
-        .rdata (imem_rdata)
-    );
-
-    ram #(.INIT_PLUSARG("program")) u_dmem (
-        .clk   (clk),
-        .en    (dmem_en),
-        .we    (dmem_we),
-        .addr  (dmem_addr),
-        .wdata (dmem_wdata),
-        .rdata (dmem_rdata)
+    dpram #(.INIT_PLUSARG("program")) u_ram (
+        .clk     (clk),
+        .a_en    (imem_en),
+        .a_addr  (imem_addr),
+        .a_rdata (imem_rdata),
+        .b_en    (dmem_en),
+        .b_we    (dmem_we),
+        .b_addr  (dmem_addr),
+        .b_wdata (dmem_wdata),
+        .b_rdata (dmem_rdata)
     );
 
     // Random wait states. `pending`: a data access was sent and its instruction is now in WB.

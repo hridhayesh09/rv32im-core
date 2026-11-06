@@ -73,6 +73,7 @@ module core
         logic        jal;
         logic        jalr;
         logic        muldiv;
+        logic        fence_i;
         logic        trap;
     } id_ex_t;
 
@@ -151,7 +152,7 @@ module core
     src_a_t      src_a_d;
     src_b_t      src_b_d;
     wb_sel_t     wb_sel_d;
-    logic        reg_write_d, mem_read_d, mem_write_d, branch_d, jal_d, jalr_d, muldiv_d;
+    logic        reg_write_d, mem_read_d, mem_write_d, branch_d, jal_d, jalr_d, muldiv_d, fence_i_d;
     logic        uses_rs1_d, uses_rs2_d, ecall_d, ebreak_d, illegal_d;
 
     decoder u_decoder (
@@ -172,6 +173,7 @@ module core
         .jal       (jal_d),
         .jalr      (jalr_d),
         .muldiv    (muldiv_d),
+        .fence_i   (fence_i_d),
         .uses_rs1  (uses_rs1_d),
         .uses_rs2  (uses_rs2_d),
         .ecall     (ecall_d),
@@ -227,6 +229,7 @@ module core
                 jal:       jal_d,
                 jalr:      jalr_d,
                 muldiv:    muldiv_d,
+                fence_i:   fence_i_d,
                 trap:      illegal_d || ecall_d || ebreak_d
             };
         end
@@ -294,8 +297,11 @@ module core
 
     logic [31:0] target_e;
     assign target_e    = ((e.jalr ? rs1_e : e.pc) + e.imm) & ~32'(e.jalr);  // JALR clears bit 0
-    assign redirect    = e.valid && (e.jal || e.jalr || (e.branch && branch_taken(e.funct3, rs1_e, rs2_e)));
-    assign redirect_pc = target_e;
+    // FENCE.I redirects to the next instruction: the 2 younger instructions, fetched before an
+    // older store to code finished, are flushed and fetched again.
+    assign redirect    = e.valid && (e.jal || e.jalr || e.fence_i ||
+                                     (e.branch && branch_taken(e.funct3, rs1_e, rs2_e)));
+    assign redirect_pc = e.fence_i ? e.pc + 32'd4 : target_e;
 
     always_ff @(posedge clk) begin
         if (rst) begin

@@ -73,11 +73,12 @@ All numbers come from `make test` (Verilator 5.036, Spike, GCC 13.2.0) unless no
 | Check | Result |
 |---|---|
 | Unit tests: ALU, register file, decoder, mul/div unit against Python models | pass |
-| Official riscv-tests rv32ui, in lockstep with Spike | **40 / 42** pass (13,107 instructions compared); `fence_i` and `ma_data` excluded ([why](docs/notes.md#stage-1-step-6-the-official-riscv-tests)) |
+| Official riscv-tests rv32ui, in lockstep with Spike | **41 / 42** pass; `ma_data` (misaligned access) excluded ([why](docs/notes.md#stage-1-step-6-the-official-riscv-tests)) |
 | Official riscv-tests rv32um, in lockstep with Spike | **8 / 8** pass (2,181 instructions compared) |
-| Directed hazard programs (forwarding, load-use, flush, mul/div) in lockstep | 6 / 6 pass |
+| Directed programs (forwarding, load-use, flush, mul/div, FENCE.I) in lockstep | 7 / 7 pass |
 | Random RV32IM programs in lockstep (20 per CI run) | pass; a local 300-program run (`RANDOM_PROGRAMS=300 make test`) compared 140,887 instructions with 0 mismatches |
 | C programs (GCC -O2) in lockstep | 3 / 3 pass |
+| All of the above again with random wait states on every data access | pass |
 
 **Performance in simulation** (cycles from reset until the program reports its result)
 
@@ -103,7 +104,7 @@ make test          # all unit, ISA, random and C-program tests
 ## Repo layout
 
 ```
-rtl/      SystemVerilog: core.sv (pipeline), alu, regfile, decoder, muldiv, ram
+rtl/      SystemVerilog: core.sv (pipeline), alu, regfile, decoder, muldiv, dpram, wb_* peripherals
 tb/       Verilator testbench top
 tests/    unit/ (cocotb unit tests), core/ (lockstep runner, riscv-tests, random, C programs),
           asm/ (directed assembly tests), env/ (riscv-tests environment), riscv-tests/ (submodule)

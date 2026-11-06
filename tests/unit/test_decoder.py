@@ -30,7 +30,7 @@ LOADS = {"lb": 0, "lh": 1, "lw": 2, "lbu": 4, "lhu": 5}
 STORES = {"sb": 0, "sh": 1, "sw": 2}
 BRANCHES = {"beq": 0, "bne": 1, "blt": 4, "bge": 5, "bltu": 6, "bgeu": 7}
 
-FLAGS = ["reg_write", "mem_read", "mem_write", "branch", "jal", "jalr", "muldiv",
+FLAGS = ["reg_write", "mem_read", "mem_write", "branch", "jal", "jalr", "muldiv", "fence_i",
          "uses_rs1", "uses_rs2", "ecall", "ebreak", "illegal"]
 
 
@@ -77,7 +77,7 @@ def random_instruction(rng):
     imm12 = rng.randrange(-2048, 2048)
     writes = int(rd != 0)
     kind = rng.choice(["r", "m", "i", "shift", "load", "store", "branch", "lui", "auipc",
-                       "jal", "jalr", "fence", "ecall", "ebreak"])
+                       "jal", "jalr", "fence", "fence_i", "ecall", "ebreak"])
 
     if kind == "r":
         name = rng.choice(list(R_TYPE))
@@ -137,6 +137,8 @@ def random_instruction(rng):
             jalr=1, uses_rs1=1)
     if kind == "fence":
         return kind, enc_i(OP_MISC_MEM, 0, rd, rs1, rng.getrandbits(12)), expect()
+    if kind == "fence_i":
+        return kind, enc_i(OP_MISC_MEM, 1, 0, 0, 0), expect(fence_i=1)
     if kind == "ecall":
         return kind, 0x00000073, expect(ecall=1)
     return kind, 0x00100073, expect(ebreak=1)
@@ -164,7 +166,7 @@ def is_legal(w):
     if op == OP_OP:
         return f7 in (0, 1) or (f7 == 0x20 and f3 in (0, 5))   # f7 = 1: M extension
     if op == OP_MISC_MEM:
-        return f3 == 0  # FENCE.I (f3 = 1) is not supported
+        return f3 in (0, 1)  # FENCE, FENCE.I
     if op == OP_SYSTEM:
         return w in (0x00000073, 0x00100073)
     return False

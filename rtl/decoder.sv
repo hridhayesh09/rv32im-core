@@ -22,6 +22,7 @@ module decoder
     output logic        jal,
     output logic        jalr,
     output logic        muldiv,     // M extension: result comes from the multiply/divide unit
+    output logic        fence_i,    // refetch everything after this instruction
     output logic        uses_rs1,   // rs1/rs2 are real operands (for hazard detection)
     output logic        uses_rs2,
     output logic        ecall,
@@ -78,6 +79,7 @@ module decoder
         jal       = 1'b0;
         jalr      = 1'b0;
         muldiv    = 1'b0;
+        fence_i   = 1'b0;
         uses_rs1  = 1'b0;
         uses_rs2  = 1'b0;
         ecall     = 1'b0;
@@ -147,8 +149,11 @@ module decoder
                 illegal   = !(funct7 == 7'b0000000 || muldiv ||
                               (funct7 == 7'b0100000 && funct3 inside {3'b000, 3'b101}));
             end
-            OP_MISC_MEM: begin                  // FENCE is a no-op on this in-order core
-                illegal   = funct3 != 3'b000;   // FENCE.I is not supported
+            OP_MISC_MEM: begin
+                // FENCE is a no-op on this in-order core. FENCE.I (Zifencei) makes stores to code
+                // visible to fetch: the core refetches the instructions after it.
+                fence_i   = funct3 == 3'b001;
+                illegal   = !(funct3 inside {3'b000, 3'b001});
             end
             OP_SYSTEM: begin
                 ecall     = instr == 32'h0000_0073;
@@ -166,6 +171,7 @@ module decoder
             jal       = 1'b0;
             jalr      = 1'b0;
             muldiv    = 1'b0;
+            fence_i   = 1'b0;
             uses_rs1  = 1'b0;
             uses_rs2  = 1'b0;
         end

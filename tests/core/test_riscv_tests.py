@@ -10,8 +10,6 @@ INCLUDES = [ROOT / "tests" / "env", ISA / "macros" / "scalar"]
 
 # Tests that cannot pass on this core, and why.
 EXCLUDED = {
-    "fence_i": "needs FENCE.I: the test rewrites its own code, which separate instruction and "
-               "data memories can't see",
     "ma_data": "misaligned loads/stores: the core has no misaligned access support or trap "
                "handler yet",
 }
