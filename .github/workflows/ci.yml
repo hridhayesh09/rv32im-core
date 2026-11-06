@@ -9,6 +9,7 @@ env:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45   # a cold tool build takes ~10 min; anything longer is a hung runner
     steps:
       - uses: actions/checkout@v7
         with:

@@ -33,15 +33,45 @@ Every number reported comes from an actual run.
 
 ## Stage 2: The computer (SoC) on the DE10-Lite
 
-- Wishbone bus connecting the CPU to memory and peripherals.
-- Boot ROM in on-chip memory; the board's 64 MB SDRAM as main memory through an SDRAM controller
-  (tested in simulation against a model of the board's SDRAM chip that checks its timing rules).
-- Memory-mapped UART (printf to a terminal), timer, GPIO (LEDs, switches, buttons).
-- UART bootloader: load and run C programs without rebuilding the FPGA.
-- Bare-metal C runtime and a driver for each peripheral.
-- An early Quartus fit of CPU + SoC + 16x16 array to check logic, DSP multipliers and on-chip memory.
-- Bring-up on the real board with a demo that prints to a terminal.
-- A list of what to film for the demo video.
+### Design decisions
+- **Memory map**
+
+  | Address | What |
+  |---|---|
+  | `0x0000_0000` | Boot ROM, 8 KB (reset address; holds the bootloader) |
+  | `0x1000_0000` | UART |
+  | `0x1000_1000` | Timer (64-bit cycle counter + compare) |
+  | `0x1000_2000` | GPIO: LEDs, switches, buttons, 7-segment displays |
+  | `0x4000_0000` | SDRAM, 64 MB (data: framebuffers, MNIST data, big arrays) |
+  | `0x8000_0000` | On-chip RAM, 64 KB (programs: code, data, stack) |
+
+  On-chip RAM stays at `0x8000_0000`, so every Stage 1 program and test links the same way.
+- **Tightly coupled memory + a bus for everything else.** Boot ROM and on-chip RAM connect to the
+  core directly, like ARM's TCMs: single-cycle, no stalls, and the RAM is dual-port (one port for
+  fetch, one for data). Everything else (peripherals, SDRAM) sits on a **Wishbone** bus, which can
+  take several cycles per access; the core's data port gets wait states for that.
+- **Code runs from on-chip RAM, not SDRAM.** Fetching from SDRAM would cost several cycles per
+  instruction without an instruction cache; the cache is a Stage 5 topic. SDRAM is for data.
+- **The bootloader writes code through the data port into the same dual-port RAM that fetch
+  reads**, so newly loaded code is visible to fetch (the FENCE.I problem from Stage 1 doesn't
+  apply). FENCE.I becomes a pipeline flush, so the 2 instructions already fetched are refetched.
+- **No interrupts yet:** drivers poll status registers. Interrupts and CSRs come when a
+  peripheral needs them.
+
+### Steps
+1. Core data port with wait states: a slow access in WB freezes the pipeline until it completes.
+   Tested by rerunning every lockstep test with random wait states injected.
+2. Wishbone interconnect and peripherals: UART (TX/RX), timer, GPIO, each with unit tests.
+3. SoC top: core + boot ROM + on-chip RAM + bus + peripherals, with a simulation test that runs C
+   code printing over the UART.
+4. SDRAM controller for the board's IS42S16320 chip (init, refresh, reads, writes), tested against
+   a simulation model of the chip that checks timing rules.
+5. C runtime: drivers for each peripheral, a small printf, and a UART bootloader in the boot ROM
+   with a host-side upload script.
+6. DE10-Lite top level with pin assignments, a Quartus compile (resource and timing reports; no
+   board needed), and an early fit with the 16x16 array.
+7. Board session (needs the board): checklist to flash, connect a terminal and run the demo, and a
+   list of what to film.
 
 ## Stage 3: Graphics
 
