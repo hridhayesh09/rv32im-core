@@ -333,3 +333,42 @@ access into two.
 A core can have separate paths (or caches) for instructions and data. When a program writes
 new code with stores (a JIT, a bootloader), FENCE.I tells the core to make those stores visible
 to instruction fetch before running the new code.
+
+## Stage 1, step 8: random instruction tests
+
+Directed tests only check the cases someone thought of. Random tests find the ones nobody
+thought of: odd combinations of hazards, registers and values.
+
+`tests/core/random_program.py` writes random RV32I programs. Each one:
+- starts with every register holding a random value (with extra weight on edge values like
+  0x80000000 and 0xFFFFFFFF), and a 256-byte data buffer full of random data;
+- runs 400 random items: ALU ops, loads and stores of every size inside the buffer, forward
+  branches and jumps (JAL, and JALR through a computed address), LUI/AUIPC, FENCE, and small
+  counted loops (backward branches);
+- uses a small "hot" set of 4 registers 60% of the time, so instructions constantly depend on
+  the one just before: forwarding and load-use stalls happen all the time.
+
+There are no expected values in the program. The oracle is Spike: every retired instruction must
+match in lockstep. Jumps only go forward (and loops have a counter), so every program ends.
+
+Seeds are fixed (0, 1, 2, ...) so any failure can be reproduced exactly. CI runs 20 programs on
+every push; `RANDOM_PROGRAMS=300 make test` runs more.
+
+**Results** (actual runs): 20 programs = 9,296 instructions compared in CI; a 300-program run
+compared 140,187 instructions with zero mismatches. A planted bug (no load-use stall when only rs2
+depends on the load) failed 14 of the 20 CI programs.
+
+### Interview questions
+
+**Directed tests or random tests?**
+Both. Directed tests prove the features you know about and give clear failures; random tests
+explore combinations you didn't think of. Constrained-random is the standard in industry DV: random
+within rules that keep the program legal (aligned addresses inside the buffer, forward-only jumps,
+bounded loops).
+
+**What is the "oracle" in your random tests?**
+Spike, the reference model. Random programs have no hand-written expected values; correctness means
+every retired instruction matches Spike.
+
+**How do you reproduce a failing random test?**
+Every program comes from a fixed seed, so rerunning that seed regenerates exactly the same program.
