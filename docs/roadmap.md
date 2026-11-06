@@ -15,14 +15,15 @@ Every number reported comes from an actual run.
 ## Stage 1: 5-stage RV32IM pipeline (simulation only)
 
 1. ALU, register file, decoder, with cocotb unit tests against a Python model.
-2. Pipeline with no hazard handling; test programs separate dependent instructions with NOPs.
+2. Pipeline with branch/jump flush (predict not-taken, resolve in EX, flush 2 instructions when taken)
+   and lockstep comparison against Spike (moved up from step 7, so every later step is checked by it).
+   Test programs separate dependent instructions with NOPs.
 3. Forwarding (EX/MEM→EX, MEM/WB→EX) and write-before-read in the register file.
 4. Load-use stall (one bubble).
-5. Branch/jump flush: predict not-taken, resolve in EX, flush 2 instructions when taken.
+5. (merged into step 2)
 6. Official riscv-tests rv32ui on a small custom `riscv_test.h`.
    `fence_i` is expected to fail with separate instruction/data memories; it is listed as excluded, with that reason.
-7. Retire trace port and lockstep comparison against Spike `--log-commits`
-   (PC, register writes, memory writes at every retired instruction).
+7. (merged into step 2)
 8. Random instruction tests: a Python generator of random instruction streams, each checked against Spike in lockstep.
 9. M extension: pipelined multiply, iterative 32-cycle divide that stalls the pipeline; rv32um and lockstep.
 10. `crt0.S`, `link.ld`, fibonacci and sort in C.

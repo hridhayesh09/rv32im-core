@@ -155,3 +155,134 @@ read registers. Comparing them blindly would cause stalls for dependencies that 
 I plant a bug on purpose (for example, take the wrong bit for the branch immediate) and check that
 the test fails with a clear message, then restore the file. A test that has never failed might not
 be checking anything.
+
+## Stage 1, steps 2-4: the pipeline, branch flush, forwarding, load-use stall
+
+### The pipeline (`rtl/core.sv`)
+A pipeline works like an assembly line. Running one instruction takes five steps, and each step
+has its own hardware, so while one instruction is being executed the next one is being decoded
+and the one after that is being fetched. Up to five instructions are in flight at once. Each
+one still takes five cycles, but one finishes every cycle.
+
+| Stage | What happens |
+|---|---|
+| **IF** (fetch) | Send the PC to the instruction memory; the PC moves on to PC+4. |
+| **ID** (decode) | The instruction arrives. Decode it and read rs1 and rs2 from the register file. |
+| **EX** (execute) | The ALU computes. Branches compare and jumps compute their target. |
+| **MEM** (memory) | Loads and stores send their address (and data) to the data memory. |
+| **WB** (write back) | The loaded data arrives; write the result to rd. |
+
+Between stages are **pipeline registers** (`d`, `e`, `m`, `w` in the code): on every clock edge
+each instruction moves one stage forward, taking everything later stages will need with it.
+
+**Valid bits and bubbles.** Each pipeline register has a `valid` bit. A slot with `valid = 0` is a
+*bubble*: an empty slot that does nothing. Bubbles appear after reset, when instructions are
+flushed, and when the pipeline stalls. Every action with an effect (writing a register, writing
+memory, jumping) checks `valid` first.
+
+**Synchronous-read memories.** FPGA block RAM (the MAX 10's M9K blocks) gives its read data one
+clock *after* it gets the address. So IF sends the PC and the instruction shows up in ID, and MEM
+sends the address and the loaded data shows up in WB. The memory's output register takes the
+place of a pipeline register, so this costs no extra cycles compared to the textbook design.
+
+### Control hazards: branch flush
+The core doesn't know where a branch goes until EX. By then it has already fetched two more
+instructions (now in IF and ID), assuming the branch is not taken ("predict not taken" is just
+"keep fetching PC+4").
+- **Not taken:** the guess was right; nothing is lost.
+- **Taken, or any jump:** those two instructions are on the wrong path. They are **flushed**
+  (turned into bubbles) and fetch restarts at the target. That costs 2 cycles: the
+  **branch penalty**.
+
+Stage 5 will add a branch predictor to guess taken branches and avoid most of that penalty.
+
+### Data hazards: forwarding
+`add x5, x1, x2` followed by `sub x6, x5, x3`: the `sub` reads x5 in ID while the `add` is still
+in EX, and x5 is only written in WB, three cycles later. Without help, `sub` would read the old
+x5.
+
+But the value already exists: the `add` computed it in EX. **Forwarding** (also called bypassing)
+sends it straight to the ALU input:
+- 1 instruction later: the producer is in **MEM**, take its result from there.
+- 2 instructions later: the producer is in **WB**, take the write-back value.
+- 3 instructions later: the producer writes in WB in the same cycle the consumer reads in ID; the
+  register file's **write-before-read** handles it.
+- If two older instructions both write the register, the newer one (MEM) wins.
+
+Forwarding works for anything that reads registers in EX: ALU operands, store address and data,
+branch comparisons and the JALR base.
+
+### Data hazards: the load-use stall
+A load is different: its data only exists once the load reaches WB. If the very next instruction
+needs it (`lw x5, 0(x10)` then `addi x6, x5, 1`), there is nothing to forward yet when `addi` is in
+EX. So the core **stalls**: IF and ID hold their instructions for one cycle (the PC doesn't move,
+and the instruction memory output is frozen) and a bubble goes into EX. One cycle later, `addi`
+enters EX just as the load reaches WB, and WB forwarding supplies the value.
+
+The stall only happens when it's really needed: the consumer must actually read the register
+(`uses_rs1`/`uses_rs2` from the decoder) and the load must actually write one (not x0). A load
+followed by an independent instruction costs nothing; compilers schedule code to make that the
+common case.
+
+### How it is tested: lockstep with Spike
+Each program in `tests/asm/` runs twice: on Spike (the official RISC-V simulator) and on the core
+in Verilator. Spike prints every instruction it retires (PC, instruction, register written and its
+value, memory address and store data). The core reports the same through its `rvfi_*` retire
+signals. The test compares the two lists one instruction at a time and stops at the first
+difference, printing both sides.
+
+The programs:
+- `padded_alu.S`, `padded_mem.S`, `control_flow.S`: every RV32I instruction, written with NOPs
+  between dependent instructions so they didn't need forwarding (written before it existed).
+  `control_flow.S` puts a `j fail` right after every taken branch and jump, so a missing flush
+  fails immediately.
+- `forwarding.S`: back-to-back dependencies at distance 1, 2 and 3, on every kind of consumer.
+- `load_use.S`: loads used immediately, by every kind of consumer, plus cases that must not stall.
+
+Each program also checks its own results and reports pass/fail through `tohost`. Spike runs the
+same checks, so a mistake in a test's expected value shows up as Spike failing, not as a fake
+CPU bug.
+
+Every hazard mechanism was switched off once on purpose to make sure its test catches it:
+no flush (the core ran the wrong-path `j fail`), MEM forwarding replaced (a stale value at
+instruction #2) and no load-use stall (a stale loaded value at instruction #4).
+
+### Interview questions
+
+**Walk me through your pipeline.**
+Five stages: IF, ID, EX, MEM, WB, with pipeline registers between them carrying each instruction's
+data and control signals. Branches resolve in EX with predict-not-taken and a 2-cycle penalty on
+taken branches. Data hazards are handled by forwarding from MEM and WB plus write-before-read in
+the register file, and the one case forwarding can't cover, a load followed by a use, stalls one
+cycle.
+
+**What are the three kinds of hazards?**
+Structural (two instructions need the same hardware at once: avoided here with separate
+instruction and data memories), data (an instruction needs a result that isn't written yet:
+forwarding and the load-use stall) and control (the next PC isn't known until a branch resolves:
+predict not taken and flush).
+
+**Why can't you forward a load result the same way as an ALU result?**
+The ALU result exists at the end of EX. The load result only exists after the memory access, at
+the end of MEM (in WB with synchronous-read memory). An instruction right behind the load is
+already in EX by then, so it has to wait one cycle.
+
+**What's the branch penalty, and how would you reduce it?**
+2 cycles for every taken branch or jump, because they resolve in EX. Ways to reduce it: resolve
+branches in ID (needs a comparator and forwarding into ID, and lengthens that stage), predict
+branches with a branch predictor and branch target buffer, or let the compiler lay out code so
+the common path falls through.
+
+**What's the difference between a stall and a flush?**
+A stall holds instructions where they are (and inserts a bubble behind them) because they can't
+proceed yet; nothing is thrown away. A flush throws away instructions that should never have
+been fetched by turning them into bubbles.
+
+**Why give every pipeline register a valid bit instead of turning bubbles into NOPs?**
+A valid bit is one flop and one AND gate per side effect, and it's unambiguous: a bubble can never
+be confused with a real instruction (an actual `nop` in the program retires and shows up in the
+trace; a bubble doesn't).
+
+**How did you verify the pipeline?**
+Lockstep comparison against Spike at every retired instruction, on directed test programs for
+each hazard type. I also disabled each hazard mechanism on purpose to confirm the tests catch it.
