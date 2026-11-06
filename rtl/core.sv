@@ -11,6 +11,8 @@
 //   and nothing downstream acts on it.
 // - The rvfi_* outputs describe each instruction as it retires from WB; the testbench compares
 //   them against Spike.
+// - Data accesses may take extra cycles (bus devices, SDRAM). While the instruction in WB is
+//   still waiting for its data (dmem_stall), the whole pipeline freezes.
 module core
     import rv_pkg::*;
 #(
@@ -28,6 +30,7 @@ module core
     output logic [31:0] dmem_addr,
     output logic [31:0] dmem_wdata,
     input  logic [31:0] dmem_rdata,
+    input  logic        dmem_stall,     // the access of the instruction in WB isn't done yet
 
     output logic        rvfi_valid,
     output logic [31:0] rvfi_pc,
@@ -110,6 +113,8 @@ module core
     logic        redirect;      // EX: taken branch or jump
     logic [31:0] redirect_pc;
     logic        stall_f, stall_d, stall_e, flush_d, flush_e;
+    logic        freeze;        // everything holds: WB is waiting for a slow data access
+    assign freeze = dmem_stall;
 
     // ---------------------------------------------------------------- IF
 
@@ -117,6 +122,7 @@ module core
 
     always_ff @(posedge clk) begin
         if (rst)           pc_f <= RESET_PC;
+        else if (freeze)   ;  // hold
         else if (redirect) pc_f <= redirect_pc;
         else if (!stall_f) pc_f <= pc_f + 32'd4;
     end
@@ -124,10 +130,12 @@ module core
     // The instruction memory's output register doubles as the IF/ID instruction register,
     // so it is frozen (en = 0) whenever ID is stalled.
     assign imem_addr = pc_f;
-    assign imem_en   = !stall_d;
+    assign imem_en   = !stall_d && !freeze;
 
     always_ff @(posedge clk) begin
-        if (rst || flush_d) d.valid <= 1'b0;
+        if (rst)            d.valid <= 1'b0;
+        else if (freeze)    ;  // hold
+        else if (flush_d)   d.valid <= 1'b0;
         else if (!stall_d)  d       <= '{valid: 1'b1, pc: pc_f};
     end
 
@@ -186,7 +194,11 @@ module core
     );
 
     always_ff @(posedge clk) begin
-        if (rst || flush_e) begin
+        if (rst) begin
+            e.valid <= 1'b0;
+        end else if (freeze) begin
+            // hold
+        end else if (flush_e) begin
             e.valid <= 1'b0;
         end else if (stall_e) begin
             // hold: a multiply/divide is still running
@@ -269,7 +281,8 @@ module core
     muldiv u_muldiv (
         .clk    (clk),
         .rst    (rst),
-        .start  (e.valid && e.muldiv && !md_done),
+        .start  (e.valid && e.muldiv && !md_done && !freeze),
+        .hold   (freeze),
         .op     (e.funct3),
         .a      (rs1_e),
         .b      (rs2_e),
@@ -285,7 +298,11 @@ module core
     assign redirect_pc = target_e;
 
     always_ff @(posedge clk) begin
-        if (rst || stall_e) begin
+        if (rst) begin
+            m.valid <= 1'b0;
+        end else if (freeze) begin
+            // hold
+        end else if (stall_e) begin
             m.valid <= 1'b0;   // bubble while EX is busy
         end else begin
             m <= '{
@@ -334,13 +351,17 @@ module core
     logic store_m;
     assign store_m    = m.valid && m.mem_write;
     assign dmem_addr  = m.result;
-    assign dmem_en    = m.valid && (m.mem_read || m.mem_write);
-    assign dmem_we    = store_m ? store_mask : 4'b0000;
+    // A request is only sent in the cycle the instruction leaves MEM (not while frozen), so a
+    // store is never issued twice.
+    assign dmem_en    = m.valid && (m.mem_read || m.mem_write) && !freeze;
+    assign dmem_we    = (store_m && !freeze) ? store_mask : 4'b0000;
     assign dmem_wdata = store_wdata;
 
     always_ff @(posedge clk) begin
         if (rst) begin
             w.valid <= 1'b0;
+        end else if (freeze) begin
+            // hold
         end else begin
             w <= '{
                 valid:     m.valid,
@@ -375,7 +396,7 @@ module core
     endfunction
 
     assign wb_data = w.mem_read ? load_extend(w.funct3, w.result[1:0], dmem_rdata) : w.result;
-    assign wb_we   = w.valid && w.reg_write;
+    assign wb_we   = w.valid && w.reg_write && !freeze;
 
     // ---------------------------------------------------------------- hazard control
 
@@ -394,7 +415,7 @@ module core
 
     // ---------------------------------------------------------------- retire trace
 
-    assign rvfi_valid     = w.valid;
+    assign rvfi_valid     = w.valid && !freeze;
     assign rvfi_pc        = w.pc;
     assign rvfi_insn      = w.instr;
     assign rvfi_trap      = w.trap;

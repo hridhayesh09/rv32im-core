@@ -71,6 +71,7 @@ async def check(dut, op, a, b):
 async def setup(dut):
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     dut.start.value = 0
+    dut.hold.value = 0
     dut.rst.value = 1
     await ClockCycles(dut.clk, 2)
     dut.rst.value = 0

@@ -501,3 +501,49 @@ The cost is the 33-cycle divider. Options: a faster divider (radix-4 or SRT, 2+ 
 let independent instructions continue while the divider runs (needs a scoreboard to stall only
 real dependents); or change the software: a sieve instead of trial division avoids division
 entirely.
+
+## Stage 2, step 1: wait states on the data port
+
+In Stage 1 every data access took exactly one cycle (address in MEM, data in WB). In the SoC,
+some devices are slower: a bus peripheral needs a few cycles, and SDRAM needs many. So the core
+gets a **wait-state input**, `dmem_stall`: "the instruction in WB is still waiting for its
+data."
+
+**What the core does: freeze.** While `dmem_stall` is high, *every* pipeline register holds,
+the PC holds, nothing is written to the register file, and nothing retires. When the data
+arrives, everything moves on together. It's the simplest correct answer for an in-order core:
+the instruction that's waiting is the oldest one, so nothing behind it can finish first anyway.
+
+Details that matter:
+- **A request is sent only once.** The core only sends a data request in the cycle its
+  instruction actually leaves MEM (`dmem_en` is off while frozen), so a store is never issued
+  twice and the memory's output register isn't overwritten while WB waits for it.
+- **The multiply/divide unit keeps its result while frozen.** It stays in its DONE state until
+  the core has really taken the result, and it doesn't start while frozen (its operands might be
+  forwarded from the load that's still waiting).
+- **Freeze beats flush.** A taken branch in EX during a freeze is applied when the freeze ends,
+  not during it.
+
+**How it's tested.** The testbench can add random wait states (`+random_stalls`): every data
+access gets a random number of extra cycles from an LFSR. All directed programs, all
+riscv-tests, the C programs and 10 random programs run again this way, in lockstep with Spike.
+They all pass, and the slowdown shows the stalls really happened (sort: 38,312 → 44,377 cycles;
+fib: 203,389 → 243,247). Removing the freeze from the EX pipeline register made 26 of these
+tests fail.
+
+### Interview questions
+
+**How does your pipeline handle a memory access that takes several cycles?**
+The memory signals a stall while the instruction in WB waits for its data, and the whole
+pipeline freezes: every pipeline register and the PC hold, nothing writes back, and requests
+aren't re-sent. When the data arrives, everything advances together.
+
+**Why not just stall the stages behind WB?**
+In an in-order pipeline the waiting instruction is the oldest; everything behind it must stay in
+order anyway, so freezing all stages is simple and costs nothing extra. Out-of-order cores let
+independent later instructions continue, at a big cost in complexity.
+
+**How did you verify the stall logic?**
+By injecting random wait states into every data access and rerunning all the lockstep tests:
+correct results with random timing means the stall logic works at any timing, not just the cases
+I thought of.

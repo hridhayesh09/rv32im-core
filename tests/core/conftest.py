@@ -29,9 +29,9 @@ def core_runner():
 
 @pytest.fixture
 def run_lockstep(core_runner):
-    """run_lockstep(src, includes, name, ...): build the program, record Spike's trace, and run
+    """run_lockstep(src, includes, name, plusargs, ...): build the program, record Spike's trace, and run
     the `lockstep` cocotb test (in lockstep.py) against it. Returns (instructions, cycles)."""
-    def run(src, includes, name=None, **build_options):
+    def run(src, includes, name=None, plusargs=(), **build_options):
         elf, hexfile, tohost = build(src, includes, name, **build_options)
         trace = elf.with_suffix(".trace.json")
         trace.write_text(json.dumps(spike_trace(elf, tohost)))
@@ -40,7 +40,7 @@ def run_lockstep(core_runner):
             hdl_toplevel="tb_top",
             test_module="lockstep",
             test_dir=HERE,
-            plusargs=[f"+program={hexfile}"],
+            plusargs=[f"+program={hexfile}", *plusargs],
             extra_env={"EXPECTED_TRACE": str(trace)},
             results_xml=str(elf.with_suffix(".result.xml")),
             log_file=log,

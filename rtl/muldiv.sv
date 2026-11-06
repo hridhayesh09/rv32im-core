@@ -6,12 +6,13 @@
 //   Divide/remainder (DIV, DIVU, REM, REMU): 33 cycles. Restoring division on the magnitudes,
 //     one quotient bit per cycle, then the signs are fixed up.
 //
-// Handshake: `start` is accepted only when idle. `done` is high for one cycle with `result`;
-// the unit is idle again the cycle after.
+// Handshake: `start` is accepted only when idle. `done` stays high with `result` until a cycle
+// without `hold` (the core has taken the result); the unit is idle the cycle after.
 module muldiv (
     input  logic        clk,
     input  logic        rst,
     input  logic        start,
+    input  logic        hold,     // core frozen: keep the result until it is taken
     input  logic [2:0]  op,       // funct3
     input  logic [31:0] a,        // rs1
     input  logic [31:0] b,        // rs2
@@ -104,7 +105,7 @@ module muldiv (
                         state    <= DONE;
                     end
                 end
-                default: state <= IDLE;   // DONE
+                default: if (!hold) state <= IDLE;   // DONE
             endcase
         end
     end
