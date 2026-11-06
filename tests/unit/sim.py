@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RTL = ROOT / "rtl"
 
 
-def run(toplevel, rtl_files, test_module, testcase=None):
+def run(toplevel, rtl_files, test_module, testcase=None, plusargs=()):
     runner = get_runner("verilator")
     runner.build(
         sources=[RTL / "rv_pkg.sv"] + [RTL / f for f in rtl_files],
@@ -19,5 +19,5 @@ def run(toplevel, rtl_files, test_module, testcase=None):
         build_args=["-Wall", "-Wno-UNUSEDPARAM"],
         always=True,
     )
-    runner.test(hdl_toplevel=toplevel, test_module=test_module, testcase=testcase,
+    runner.test(hdl_toplevel=toplevel, test_module=test_module, testcase=testcase, plusargs=plusargs,
                 test_dir=Path(__file__).parent)
