@@ -1,0 +1,5 @@
+`verilator_config
+// pe.v and systolic_array.v are copied unchanged from edge-ml-accelerator. They widen signed
+// values implicitly (sign extension, on purpose), which -Wall reports as WIDTHEXPAND.
+lint_off -rule WIDTHEXPAND -file "*/npu/pe.v"
+lint_off -rule WIDTHEXPAND -file "*/npu/systolic_array.v"
