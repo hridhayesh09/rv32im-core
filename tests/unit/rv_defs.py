@@ -1,0 +1,28 @@
+"""Python mirror of rtl/rv_pkg.sv. Keep the two in sync."""
+
+OP_LUI = 0b0110111
+OP_AUIPC = 0b0010111
+OP_JAL = 0b1101111
+OP_JALR = 0b1100111
+OP_BRANCH = 0b1100011
+OP_LOAD = 0b0000011
+OP_STORE = 0b0100011
+OP_IMM = 0b0010011
+OP_OP = 0b0110011
+OP_MISC_MEM = 0b0001111
+OP_SYSTEM = 0b1110011
+
+ALU_ADD, ALU_SUB, ALU_SLL, ALU_SLT, ALU_SLTU = 0, 1, 2, 3, 4
+ALU_XOR, ALU_SRL, ALU_SRA, ALU_OR, ALU_AND = 5, 6, 7, 8, 9
+ALU_OPS = range(10)
+
+SRC_A_RS1, SRC_A_PC, SRC_A_ZERO = 0, 1, 2
+SRC_B_RS2, SRC_B_IMM = 0, 1
+WB_ALU, WB_MEM, WB_PC4 = 0, 1, 2
+
+MASK32 = 0xFFFFFFFF
+
+
+def signed32(x):
+    x &= MASK32
+    return x - (1 << 32) if x & 0x80000000 else x
