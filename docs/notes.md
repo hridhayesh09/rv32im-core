@@ -286,3 +286,50 @@ trace; a bubble doesn't).
 **How did you verify the pipeline?**
 Lockstep comparison against Spike at every retired instruction, on directed test programs for
 each hazard type. I also disabled each hazard mechanism on purpose to confirm the tests catch it.
+
+## Stage 1, step 6: the official riscv-tests
+
+[riscv-tests](https://github.com/riscv-software-src/riscv-tests) is the RISC-V project's own set
+of instruction tests. The `rv32ui` suite ("RV32, user-level, integer") has one test per base
+instruction, each with dozens of cases: edge values, every register used as source and
+destination, and back-to-back dependencies at different distances (the "bypass" cases), which
+test forwarding again from a different angle.
+
+**The environment file.** Each test includes `riscv_test.h`, which says how a test starts and
+how it reports pass/fail. The official version sets up machine-mode CSRs and trap handlers and
+ends with ECALL, which this core doesn't have yet. So `tests/env/riscv_test.h` is a minimal
+replacement: clear all registers, run the test, write the result to `tohost` (1 = pass,
+(test number << 1) | 1 = fail). Writing your own environment is the normal way to bring up the
+suite on a new core.
+
+**How they run.** Each test runs in lockstep with Spike, like the hand-written programs: every
+retired instruction must match, not just the final pass/fail.
+
+**Result** (`make test`): 40 of 42 rv32ui tests pass, comparing 13,107 instructions against
+Spike. Two are excluded, with the reason printed in the test output:
+- `fence_i`: the test rewrites its own code and runs it. With separate instruction and data
+  memories, the instruction side never sees the new code. Supporting it needs FENCE.I to
+  flush/reload instruction memory (or a cache), which comes later.
+- `ma_data`: misaligned loads and stores (e.g. a word at an address that isn't a multiple of
+  4). The spec allows a core to either handle them in hardware or trap and handle them in
+  software; this core does neither yet.
+
+A planted bug (SRA behaving like SRL) failed the `sra`, `srai` and `lui` tests.
+
+### Interview questions
+
+**How did you know your CPU implements the ISA correctly?**
+Three layers: unit tests of the ALU, register file and decoder against Python models; the
+official riscv-tests rv32ui suite; and lockstep comparison against Spike on every retired
+instruction of every test, so a bug is caught at the exact instruction where it happens.
+
+**What is a misaligned access and what does RISC-V say about it?**
+An access whose address isn't a multiple of its size, like a 4-byte load from address 0x1002.
+RISC-V lets the implementation choose: handle it in hardware, or raise an exception so software
+can emulate it. Simple cores usually trap, because handling it in hardware means splitting one
+access into two.
+
+**Why does FENCE.I exist?**
+A core can have separate paths (or caches) for instructions and data. When a program writes
+new code with stores (a JIT, a bootloader), FENCE.I tells the core to make those stores visible
+to instruction fetch before running the new code.

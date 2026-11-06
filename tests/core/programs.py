@@ -9,21 +9,23 @@ BUILD = ROOT / "build" / "programs"
 BASE_ADDR = 0x80000000
 
 CFLAGS = ["-march=rv32i", "-mabi=ilp32", "-nostdlib", "-nostartfiles", "-mno-relax",
-          "-Wl,--no-warn-rwx-segments", "-T", str(ROOT / "sw" / "link.ld"),
-          "-I", str(ROOT / "tests" / "asm")]
+          "-Wl,--no-warn-rwx-segments", "-T", str(ROOT / "sw" / "link.ld")]
 
 
-def build(src):
+def build(src, includes, name=None):
     """Assemble/compile one program. Returns (elf path, hex path, tohost address)."""
     BUILD.mkdir(parents=True, exist_ok=True)
-    elf = BUILD / f"{src.stem}.elf"
-    subprocess.run(["riscv64-unknown-elf-gcc", *CFLAGS, "-o", str(elf), str(src)], check=True)
+    name = name or src.stem
+    elf = BUILD / f"{name}.elf"
+    include_flags = [flag for inc in includes for flag in ("-I", str(inc))]
+    subprocess.run(["riscv64-unknown-elf-gcc", *CFLAGS, *include_flags, "-o", str(elf), str(src)],
+                   check=True)
 
-    binary = BUILD / f"{src.stem}.bin"
+    binary = BUILD / f"{name}.bin"
     subprocess.run(["riscv64-unknown-elf-objcopy", "-O", "binary", str(elf), str(binary)], check=True)
     image = binary.read_bytes()
     image += bytes(-len(image) % 4)
-    hexfile = BUILD / f"{src.stem}.hex"
+    hexfile = BUILD / f"{name}.hex"
     hexfile.write_text("".join(f"{int.from_bytes(image[i:i + 4], 'little'):08x}\n"
                                for i in range(0, len(image), 4)))
 
