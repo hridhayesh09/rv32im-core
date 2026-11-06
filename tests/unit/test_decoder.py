@@ -25,11 +25,12 @@ I_ARITH = {  # mnemonic: (funct3, alu_op)
     "xori": (4, ALU_XOR), "ori": (6, ALU_OR), "andi": (7, ALU_AND),
 }
 SHIFT_I = {"slli": (1, 0x00, ALU_SLL), "srli": (5, 0x00, ALU_SRL), "srai": (5, 0x20, ALU_SRA)}
+M_TYPE = {"mul": 0, "mulh": 1, "mulhsu": 2, "mulhu": 3, "div": 4, "divu": 5, "rem": 6, "remu": 7}
 LOADS = {"lb": 0, "lh": 1, "lw": 2, "lbu": 4, "lhu": 5}
 STORES = {"sb": 0, "sh": 1, "sw": 2}
 BRANCHES = {"beq": 0, "bne": 1, "blt": 4, "bge": 5, "bltu": 6, "bgeu": 7}
 
-FLAGS = ["reg_write", "mem_read", "mem_write", "branch", "jal", "jalr",
+FLAGS = ["reg_write", "mem_read", "mem_write", "branch", "jal", "jalr", "muldiv",
          "uses_rs1", "uses_rs2", "ecall", "ebreak", "illegal"]
 
 
@@ -75,7 +76,7 @@ def random_instruction(rng):
     rd, rs1, rs2 = rng.randrange(32), rng.randrange(32), rng.randrange(32)
     imm12 = rng.randrange(-2048, 2048)
     writes = int(rd != 0)
-    kind = rng.choice(["r", "i", "shift", "load", "store", "branch", "lui", "auipc",
+    kind = rng.choice(["r", "m", "i", "shift", "load", "store", "branch", "lui", "auipc",
                        "jal", "jalr", "fence", "ecall", "ebreak"])
 
     if kind == "r":
@@ -84,6 +85,11 @@ def random_instruction(rng):
         return name, enc_r(OP_OP, f3, f7, rd, rs1, rs2), expect(
             rd=rd, rs1=rs1, rs2=rs2, alu_op=alu, src_a=SRC_A_RS1, src_b=SRC_B_RS2,
             wb_sel=WB_ALU, reg_write=writes, uses_rs1=1, uses_rs2=1)
+    if kind == "m":
+        name = rng.choice(list(M_TYPE))
+        return name, enc_r(OP_OP, M_TYPE[name], 0x01, rd, rs1, rs2), expect(
+            rd=rd, rs1=rs1, rs2=rs2, funct3=M_TYPE[name], src_b=SRC_B_RS2,
+            reg_write=writes, muldiv=1, uses_rs1=1, uses_rs2=1)
     if kind == "i":
         name = rng.choice(list(I_ARITH))
         f3, alu = I_ARITH[name]
@@ -137,7 +143,7 @@ def random_instruction(rng):
 
 
 def is_legal(w):
-    """Which words are legal RV32I instructions on this core, from the spec's opcode map."""
+    """Which words are legal RV32IM instructions on this core, from the spec's opcode map."""
     op, f3, f7 = w & 0x7F, (w >> 12) & 7, w >> 25
     if op in (OP_LUI, OP_AUIPC, OP_JAL):
         return True
@@ -156,12 +162,12 @@ def is_legal(w):
             return f7 in (0, 0x20)
         return True
     if op == OP_OP:
-        return f7 == 0 or (f7 == 0x20 and f3 in (0, 5))
+        return f7 in (0, 1) or (f7 == 0x20 and f3 in (0, 5))   # f7 = 1: M extension
     if op == OP_MISC_MEM:
         return f3 == 0  # FENCE.I (f3 = 1) is not supported
     if op == OP_SYSTEM:
         return w in (0x00000073, 0x00100073)
-    return False  # includes M-extension encodings until the M step
+    return False
 
 
 async def decode(dut, word):

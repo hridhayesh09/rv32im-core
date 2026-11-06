@@ -25,7 +25,7 @@ Every number reported comes from an actual run.
    `fence_i` is expected to fail with separate instruction/data memories; it is listed as excluded, with that reason.
 7. (merged into step 2)
 8. Random instruction tests: a Python generator of random instruction streams, each checked against Spike in lockstep.
-9. M extension: pipelined multiply, iterative 32-cycle divide that stalls the pipeline; rv32um and lockstep.
+9. M extension: multi-cycle multiply (2 extra cycles) and iterative divide (33 extra cycles) that stall EX; rv32um and lockstep.
 10. `crt0.S`, `link.ld`, fibonacci and sort in C.
 11. README architecture diagram and docs/notes.md.
 

@@ -372,3 +372,81 @@ every retired instruction matches Spike.
 
 **How do you reproduce a failing random test?**
 Every program comes from a fixed seed, so rerunning that seed regenerates exactly the same program.
+
+## Stage 1, step 9: the M extension (multiply and divide)
+
+The M extension adds 8 instructions:
+- **MUL**: low 32 bits of rs1 × rs2 (the same for signed and unsigned).
+- **MULH / MULHSU / MULHU**: the high 32 bits of the 64-bit product, treating the operands as
+  signed×signed, signed×unsigned, or unsigned×unsigned.
+- **DIV / DIVU**: quotient, rounded toward zero. **REM / REMU**: remainder; its sign follows the
+  dividend, so `dividend = divisor × quotient + remainder` always holds.
+
+**No exceptions for division.** RISC-V never traps on divide. Dividing by zero gives a quotient
+of all ones (-1) and a remainder equal to the dividend; the one signed overflow case,
+-2^31 / -1, gives -2^31 with remainder 0. The hardware handles both without any special path.
+
+### The multiply/divide unit (`rtl/muldiv.sv`)
+It is a separate unit next to the ALU, because multiply and divide are much bigger and slower than
+an add. It takes several cycles, and the pipeline waits for it:
+
+- **Multiply: 2 extra cycles.** The operands are first copied into registers, then a 33×33-bit
+  signed multiplier computes the product into the result register. Extending each operand to 33
+  bits (with its sign bit for signed operands, a 0 for unsigned) lets one signed multiplier do
+  all four MUL variants. Having registers on both sides gives the multiplier a full clock cycle,
+  which matters on the FPGA, where it maps onto the hardware multiplier (DSP) blocks.
+- **Divide: 33 extra cycles.** *Restoring division*, the long division from school in binary:
+  each cycle shifts one more bit of the dividend into the remainder, and if the divisor fits it is
+  subtracted and the quotient bit is 1. 32 bits take 32 cycles. Signed division divides the
+  magnitudes and fixes the signs at the end.
+
+Measured on the core: 64 independent instructions took 80 cycles for ADD, 208 for MUL and 2,192
+for DIVU (the same program otherwise), so (208 − 80) / 64 = **2 extra cycles per MUL** and
+(2192 − 80) / 64 = **33 extra cycles per DIVU**.
+
+### How the pipeline waits: the EX stall
+When an M instruction is in EX and the unit isn't done, the core **stalls EX**: the instruction
+stays in EX, IF and ID hold too, and bubbles go into MEM (so instructions already ahead keep
+going and retire). When the unit says `done`, the result goes into the EX/MEM register like an
+ALU result, and from there forwarding works exactly as for any other instruction.
+
+The unit copies its operands when it starts, so they are the correct forwarded values at that
+moment, even though the instructions they were forwarded from move on.
+
+### Tradeoffs worth knowing
+- **Faster multiply:** a single-cycle multiplier needs no stall but makes EX slower, which lowers
+  the clock for every instruction. A pipelined multiplier (several stages, a new multiply every
+  cycle) is what high-performance cores use; it adds forwarding/hazard cases.
+- **Faster divide:** radix-4 or SRT dividers produce 2+ bits per cycle at more area. Division is
+  rare in most code (compilers turn division by constants into multiplies), so a slow, small
+  divider is a common choice for small cores.
+- **Not blocking the pipeline:** an out-of-order core keeps running independent instructions while
+  a divide is in progress. This in-order core simply waits.
+
+**Results** (`make test`): all 8 official rv32um tests pass in lockstep with Spike (2,181
+instructions); a directed `muldiv.S` covers forwarding into and out of the unit, back-to-back M
+instructions, a load-use stall into a multiply, and branches right after a divide; the random
+programs now include M instructions (a 300-program run compared 140,887 instructions, 6,667 of
+them multiply/divide, with no mismatch). The unit's own tests check every operation on all pairs
+of 10 edge values plus 3,000 random cases. A planted bug (remainder sign not fixed) failed the
+official `rem` test.
+
+### Interview questions
+
+**Why is divide so much slower than multiply?**
+A multiply's partial products are all known up front and can be added in parallel (a tree of
+adders, or the FPGA's DSP blocks). Division is sequential: each quotient bit depends on the
+remainder left by the previous step.
+
+**What does RISC-V do on division by zero?**
+No trap: the quotient is all ones and the remainder is the dividend. That keeps the hardware
+simple; software that cares checks the divisor first.
+
+**How did you implement MULHSU with one multiplier?**
+Extend both operands to 33 bits, the signed one with its sign bit and the unsigned one with a 0,
+then do one 33×33 signed multiply. The extra bit makes an unsigned 32-bit value a non-negative
+signed number.
+
+**What happens to the pipeline during a 33-cycle divide?**
+The divide stays in EX; IF and ID hold, and bubbles go into MEM, so older instructions finish. When
+the unit is done, the divide moves on and the pipeline continues.

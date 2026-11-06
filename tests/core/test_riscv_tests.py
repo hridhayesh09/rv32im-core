@@ -27,3 +27,8 @@ def suite(name):
 @pytest.mark.parametrize("src", suite("rv32ui"))
 def test_rv32ui(run_lockstep, src):
     run_lockstep(src, INCLUDES, name=f"rv32ui-{src.stem}")
+
+
+@pytest.mark.parametrize("src", suite("rv32um"))
+def test_rv32um(run_lockstep, src):
+    run_lockstep(src, INCLUDES, name=f"rv32um-{src.stem}")

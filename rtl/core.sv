@@ -1,4 +1,4 @@
-// 5-stage in-order RV32I pipeline: IF -> ID -> EX -> MEM -> WB.
+// 5-stage in-order RV32IM pipeline: IF -> ID -> EX -> MEM -> WB.
 //
 // - Both memories have a synchronous read (like FPGA block RAM). IF sends the PC to the
 //   instruction memory and the instruction arrives in ID; MEM sends the address to the data
@@ -6,6 +6,7 @@
 // - Branches and jumps are resolved in EX. The core always fetches PC+4 next ("predict not
 //   taken"); when EX finds a taken branch or a jump, the two younger instructions in IF and ID
 //   are flushed and fetch restarts at the target.
+// - Multiply and divide run in a multi-cycle unit; EX holds the instruction until it's done.
 // - Every pipeline register has a valid bit. A flushed or empty slot is a bubble: valid = 0,
 //   and nothing downstream acts on it.
 // - The rvfi_* outputs describe each instruction as it retires from WB; the testbench compares
@@ -68,6 +69,7 @@ module core
         logic        branch;
         logic        jal;
         logic        jalr;
+        logic        muldiv;
         logic        trap;
     } id_ex_t;
 
@@ -107,7 +109,7 @@ module core
     // Hazard control (set below).
     logic        redirect;      // EX: taken branch or jump
     logic [31:0] redirect_pc;
-    logic        stall_f, stall_d, flush_d, flush_e;
+    logic        stall_f, stall_d, stall_e, flush_d, flush_e;
 
     // ---------------------------------------------------------------- IF
 
@@ -141,7 +143,7 @@ module core
     src_a_t      src_a_d;
     src_b_t      src_b_d;
     wb_sel_t     wb_sel_d;
-    logic        reg_write_d, mem_read_d, mem_write_d, branch_d, jal_d, jalr_d;
+    logic        reg_write_d, mem_read_d, mem_write_d, branch_d, jal_d, jalr_d, muldiv_d;
     logic        uses_rs1_d, uses_rs2_d, ecall_d, ebreak_d, illegal_d;
 
     decoder u_decoder (
@@ -161,6 +163,7 @@ module core
         .branch    (branch_d),
         .jal       (jal_d),
         .jalr      (jalr_d),
+        .muldiv    (muldiv_d),
         .uses_rs1  (uses_rs1_d),
         .uses_rs2  (uses_rs2_d),
         .ecall     (ecall_d),
@@ -183,7 +186,11 @@ module core
     );
 
     always_ff @(posedge clk) begin
-        if (rst || flush_e || stall_d) begin
+        if (rst || flush_e) begin
+            e.valid <= 1'b0;
+        end else if (stall_e) begin
+            // hold: a multiply/divide is still running
+        end else if (stall_d) begin
             e.valid <= 1'b0;   // bubble
         end else begin
             e <= '{
@@ -207,6 +214,7 @@ module core
                 branch:    branch_d,
                 jal:       jal_d,
                 jalr:      jalr_d,
+                muldiv:    muldiv_d,
                 trap:      illegal_d || ecall_d || ebreak_d
             };
         end
@@ -254,20 +262,37 @@ module core
         endcase
     endfunction
 
+    // Multiply/divide: start the unit when an M instruction reaches EX; hold it there until done.
+    logic        md_done;
+    logic [31:0] md_result;
+
+    muldiv u_muldiv (
+        .clk    (clk),
+        .rst    (rst),
+        .start  (e.valid && e.muldiv && !md_done),
+        .op     (e.funct3),
+        .a      (rs1_e),
+        .b      (rs2_e),
+        .done   (md_done),
+        .result (md_result)
+    );
+
+    assign stall_e = e.valid && e.muldiv && !md_done;
+
     logic [31:0] target_e;
     assign target_e    = ((e.jalr ? rs1_e : e.pc) + e.imm) & ~32'(e.jalr);  // JALR clears bit 0
     assign redirect    = e.valid && (e.jal || e.jalr || (e.branch && branch_taken(e.funct3, rs1_e, rs2_e)));
     assign redirect_pc = target_e;
 
     always_ff @(posedge clk) begin
-        if (rst) begin
-            m.valid <= 1'b0;
+        if (rst || stall_e) begin
+            m.valid <= 1'b0;   // bubble while EX is busy
         end else begin
             m <= '{
                 valid:      e.valid,
                 pc:         e.pc,
                 instr:      e.instr,
-                result:     (e.wb_sel == WB_PC4) ? e.pc + 32'd4 : alu_y,
+                result:     e.muldiv ? md_result : (e.wb_sel == WB_PC4) ? e.pc + 32'd4 : alu_y,
                 store_data: rs2_e,
                 rd:         e.rd,
                 funct3:     e.funct3,
@@ -362,8 +387,8 @@ module core
     assign load_use = e.valid && e.mem_read && e.reg_write && d.valid &&
                       ((uses_rs1_d && rs1_d == e.rd) || (uses_rs2_d && rs2_d == e.rd));
 
-    assign stall_f = load_use;
-    assign stall_d = load_use;
+    assign stall_f = load_use || stall_e;
+    assign stall_d = load_use || stall_e;
     assign flush_d = redirect;   // the instruction being fetched is on the wrong path
     assign flush_e = redirect;   // so is the one in ID
 

@@ -10,7 +10,7 @@ SystemVerilog, grown into a system-on-chip on the Terasic DE10-Lite (Intel MAX 1
 | Stage | What | Status |
 |---|---|---|
 | 0 | Toolchain, repo skeleton, CI | done |
-| 1 | 5-stage RV32IM pipeline, riscv-tests, Spike lockstep, random tests, C programs | in progress: RV32I pipeline with forwarding, load-use stall and branch flush; 40/42 official rv32ui tests pass in lockstep with Spike (2 excluded, see notes); random programs match Spike |
+| 1 | 5-stage RV32IM pipeline, riscv-tests, Spike lockstep, random tests, C programs | in progress: RV32IM pipeline with forwarding, load-use stall, branch flush and multi-cycle multiply/divide; 40/42 rv32ui and 8/8 rv32um official tests pass in lockstep with Spike (2 excluded, see notes); random programs match Spike |
 | 2 | SoC: Wishbone bus, boot ROM, SDRAM, UART, timer, GPIO, UART bootloader | planned |
 | 3 | VGA framebuffer, graphics driver, a playable game | planned |
 | 4 | Systolic array accelerator, MNIST software vs accelerator | planned |

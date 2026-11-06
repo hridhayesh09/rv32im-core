@@ -1,4 +1,4 @@
-// Instruction decoder for RV32I: turns a 32-bit instruction into register numbers,
+// Instruction decoder for RV32IM: turns a 32-bit instruction into register numbers,
 // a sign-extended immediate and the control signals the later pipeline stages need.
 // Purely combinational. An illegal instruction comes out with every side effect off
 // (no register write, no memory access, no jump) and `illegal` set.
@@ -21,6 +21,7 @@ module decoder
     output logic        branch,
     output logic        jal,
     output logic        jalr,
+    output logic        muldiv,     // M extension: result comes from the multiply/divide unit
     output logic        uses_rs1,   // rs1/rs2 are real operands (for hazard detection)
     output logic        uses_rs2,
     output logic        ecall,
@@ -76,6 +77,7 @@ module decoder
         branch    = 1'b0;
         jal       = 1'b0;
         jalr      = 1'b0;
+        muldiv    = 1'b0;
         uses_rs1  = 1'b0;
         uses_rs2  = 1'b0;
         ecall     = 1'b0;
@@ -141,7 +143,8 @@ module decoder
                 writes_rd = 1'b1;
                 uses_rs1  = 1'b1;
                 uses_rs2  = 1'b1;
-                illegal   = !(funct7 == 7'b0000000 ||
+                muldiv    = funct7 == 7'b0000001;   // MUL..REMU, any funct3
+                illegal   = !(funct7 == 7'b0000000 || muldiv ||
                               (funct7 == 7'b0100000 && funct3 inside {3'b000, 3'b101}));
             end
             OP_MISC_MEM: begin                  // FENCE is a no-op on this in-order core
@@ -162,6 +165,7 @@ module decoder
             branch    = 1'b0;
             jal       = 1'b0;
             jalr      = 1'b0;
+            muldiv    = 1'b0;
             uses_rs1  = 1'b0;
             uses_rs2  = 1'b0;
         end

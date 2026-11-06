@@ -1,7 +1,7 @@
-"""Random RV32I test programs.
+"""Random RV32IM test programs.
 
 Each program starts with every register holding a random value, then runs a few hundred random
-instructions: ALU ops, loads and stores to a data buffer, forward branches and jumps, and small
+instructions: ALU ops, multiply/divide, loads and stores to a data buffer, forward branches and jumps, and small
 counted loops (backward branches). Most instructions use a small pool of registers, so
 back-to-back dependencies, forwarding and load-use stalls happen all the time.
 
@@ -19,6 +19,7 @@ GENERAL = [f"x{i}" for i in range(1, 29)]
 HOT = ["x5", "x6", "x7", "x8"]   # used often, to create dependencies
 
 RR = ["add", "sub", "sll", "slt", "sltu", "xor", "srl", "sra", "or", "and"]
+MULDIV = ["mul", "mulh", "mulhsu", "mulhu", "div", "divu", "rem", "remu"]
 RI = ["addi", "slti", "sltiu", "xori", "ori", "andi"]
 SHIFT_I = ["slli", "srli", "srai"]
 LOADS = {"lb": 1, "lbu": 1, "lh": 2, "lhu": 2, "lw": 4}
@@ -49,11 +50,13 @@ class Generator:
 
     def simple(self):
         """One instruction that doesn't change control flow."""
-        kind = self.rng.choices(["rr", "ri", "shift", "load", "store", "upper", "fence"],
-                                weights=[30, 25, 8, 15, 12, 8, 2])[0]
+        kind = self.rng.choices(["rr", "muldiv", "ri", "shift", "load", "store", "upper", "fence"],
+                                weights=[30, 8, 25, 8, 15, 12, 8, 2])[0]
         rd, rs1, rs2 = self.reg(), self.reg(), self.reg()
         if kind == "rr":
             return f"{self.rng.choice(RR)} {rd}, {rs1}, {rs2}"
+        if kind == "muldiv":
+            return f"{self.rng.choice(MULDIV)} {rd}, {rs1}, {rs2}"
         if kind == "ri":
             return f"{self.rng.choice(RI)} {rd}, {rs1}, {self.imm12()}"
         if kind == "shift":
