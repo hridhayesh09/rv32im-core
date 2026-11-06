@@ -4,6 +4,8 @@
 //   0x1000_0000  UART                (Wishbone)
 //   0x1000_1000  timer               (Wishbone)
 //   0x1000_2000  GPIO                (Wishbone)
+//   0x1000_3000  VGA registers       (Wishbone: palette, status)
+//   0x2000_0000  VGA framebuffer     (Wishbone: 320x240, one byte per pixel)
 //   0x4000_0000  SDRAM, 64 MB        (Wishbone; the first access waits for the 200 us init)
 //   0x8000_0000  on-chip RAM, 64 KB  (tightly coupled: no wait states)
 //   anything else                    (Wishbone; reads 0, writes ignored)
@@ -24,6 +26,12 @@ module soc #(
     input  logic [9:0]  sw,
     input  logic [1:0]  key_n,
     output logic [47:0] hex_n,
+
+    output logic [3:0]  vga_r,
+    output logic [3:0]  vga_g,
+    output logic [3:0]  vga_b,
+    output logic        vga_hs,
+    output logic        vga_vs,
 
     output logic        sdram_cke,
     output logic        sdram_cs_n,
@@ -105,7 +113,7 @@ module soc #(
 
     // Which slave an access goes to is decoded when the request is captured and kept in a
     // register, so the address decoder isn't on the path from a slave's ack to the core's stall.
-    typedef enum logic [2:0] { SLAVE_UART, SLAVE_TIMER, SLAVE_GPIO, SLAVE_SDRAM, SLAVE_NONE } slave_t;
+    typedef enum logic [2:0] { SLAVE_UART, SLAVE_TIMER, SLAVE_GPIO, SLAVE_VGA, SLAVE_SDRAM, SLAVE_NONE } slave_t;
 
     function automatic slave_t decode_slave(input logic [31:0] addr);
         if (addr[31:16] == 16'h1000) begin
@@ -113,8 +121,11 @@ module soc #(
                 4'h0:    return SLAVE_UART;
                 4'h1:    return SLAVE_TIMER;
                 4'h2:    return SLAVE_GPIO;
+                4'h3:    return SLAVE_VGA;
                 default: return SLAVE_NONE;
             endcase
+        end else if (addr[31:28] == 4'h2) begin
+            return SLAVE_VGA;
         end else if (addr[31:28] == 4'h4) begin
             return SLAVE_SDRAM;
         end else begin
@@ -157,8 +168,8 @@ module soc #(
     localparam logic [15:0] UART_DIVISOR_16 = UART_DIVISOR[15:0];
 
 
-    logic [31:0] uart_dat_r, timer_dat_r, gpio_dat_r, sdram_dat_r;
-    logic        uart_ack, timer_ack, gpio_ack, sdram_ack, none_ack;
+    logic [31:0] uart_dat_r, timer_dat_r, gpio_dat_r, vga_dat_r, sdram_dat_r;
+    logic        uart_ack, timer_ack, gpio_ack, vga_ack, sdram_ack, none_ack;
 
     wb_uart #(.DEFAULT_DIVISOR(UART_DIVISOR_16)) u_uart (
         .clk, .rst,
@@ -195,6 +206,18 @@ module soc #(
         .ledr, .sw, .key_n, .hex_n
     );
 
+    wb_vga u_vga (
+        .clk, .rst,
+        .wb_stb   (bus_stb && slave == SLAVE_VGA),
+        .wb_we    (bus_we),
+        .wb_adr   (bus_adr),
+        .wb_dat_w (bus_dat_w),
+        .wb_sel   (bus_sel),
+        .wb_dat_r (vga_dat_r),
+        .wb_ack   (vga_ack),
+        .vga_r, .vga_g, .vga_b, .vga_hs, .vga_vs
+    );
+
     sdram_ctrl u_sdram (
         .clk, .rst,
         .wb_stb   (bus_stb && slave == SLAVE_SDRAM),
@@ -219,6 +242,7 @@ module soc #(
             SLAVE_UART:  begin bus_ack = uart_ack;  bus_dat_r = uart_dat_r;  end
             SLAVE_TIMER: begin bus_ack = timer_ack; bus_dat_r = timer_dat_r; end
             SLAVE_GPIO:  begin bus_ack = gpio_ack;  bus_dat_r = gpio_dat_r;  end
+            SLAVE_VGA:   begin bus_ack = vga_ack;   bus_dat_r = vga_dat_r;   end
             SLAVE_SDRAM: begin bus_ack = sdram_ack; bus_dat_r = sdram_dat_r; end
             default:     begin bus_ack = none_ack;  bus_dat_r = '0;          end
         endcase

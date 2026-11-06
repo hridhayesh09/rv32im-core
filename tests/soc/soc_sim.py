@@ -16,14 +16,15 @@ C_FLAGS = ["-O2", "-ffreestanding", "-fno-builtin", "-Wall", "-Werror"]
 UART_DIVISOR = 8   # clock cycles per bit in simulation (the board uses 434 for 115200 baud)
 
 RTL_SOURCES = ["rv_pkg.sv", "alu.sv", "regfile.sv", "decoder.sv", "muldiv.sv", "dpram.sv",
-               "core.sv", "wb_uart.sv", "wb_timer.sv", "wb_gpio.sv", "sdram_ctrl.sv", "soc.sv"]
-TB_SOURCES = ["sdram_model.sv", "tb_soc.sv"]
+               "core.sv", "wb_uart.sv", "wb_timer.sv", "wb_gpio.sv", "fb_ram.sv", "wb_vga.sv",
+               "sdram_ctrl.sv", "soc.sv"]
+TB_SOURCES = ["sdram_model.sv", "vga_capture.sv", "tb_soc.sv"]
 
 
-def build_program(src):
+def build_program(src, extra_flags=(), name=None):
     """A C program for on-chip RAM, with crt0 and the driver library. Returns the hex path."""
-    _, hexfile, _ = build(src, [SW / "lib"], name=f"soc-{src.stem}",
-                          extra_sources=[SW / "crt0.S", *LIB], extra_flags=C_FLAGS)
+    _, hexfile, _ = build(src, [SW / "lib"], name=name or f"soc-{src.stem}",
+                          extra_sources=[SW / "crt0.S", *LIB], extra_flags=[*C_FLAGS, *extra_flags])
     return hexfile
 
 

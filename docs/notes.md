@@ -851,3 +851,75 @@ The timing report showed the slowest path started at the bus address and went th
 decoder in the same cycle as the acknowledge. I moved the decode to the cycle the request is
 captured and registered it, which removed that logic from the path: slack went from +0.012 ns to
 +1.875 ns.
+
+## Stage 3: graphics
+
+### How VGA works
+A VGA monitor draws the picture one line at a time, left to right, top to bottom, 60 times a
+second. The signal is just five wires: red, green and blue (analog levels; the DE10-Lite turns 4
+bits per colour into a voltage with resistors) and two sync pulses:
+- **HSYNC** marks the end of every line. A 640x480 line is 800 pixel times: 640 visible, then a
+  16-pixel "front porch", a 96-pixel sync pulse, and a 48-pixel "back porch".
+- **VSYNC** marks the end of every frame: 525 lines, 480 visible, then 10 + 2 (sync) + 33.
+
+The porches and blank lines are left over from CRT monitors, which needed time to move the beam
+back. The pixel rate is 25 MHz (one pixel every 2 clocks at 50 MHz), giving 59.5 frames per second;
+monitors accept it.
+
+### The framebuffer (`rtl/wb_vga.sv`, `rtl/fb_ram.sv`)
+The picture lives in a **framebuffer**: one memory location per pixel. The display reads it
+continuously, in step with the beam; the CPU writes it to change the picture.
+- **320x240, each pixel shown as a 2x2 block** on the 640x480 screen: a quarter of the memory.
+- **4 bits per pixel = 16 colours**, through a **palette**: the 4-bit value picks one of 16
+  programmable 12-bit colours. A palette costs 16 registers instead of 8 more bits per pixel.
+- **Dual-port block RAM:** the display reads one port, the CPU writes the other, so they never wait
+  for each other. 76,800 pixels × 4 bits = 38 M9K blocks. (Why on-chip and not SDRAM: see the
+  Stage 3 table in the roadmap.)
+- **Registered output, one pixel late:** the RAM needs a clock to return the pixel, so the sync
+  signals are delayed by the same amount to stay lined up with the colours.
+- **Vertical blank status:** drawing while the beam is in the blank lines (`gfx_wait_vblank`)
+  avoids "tearing" (half of the old picture and half of the new one on screen).
+
+### Testing without a monitor (`tb/vga_capture.sv`)
+A simulated monitor watches the five VGA signals. Like a real one, it finds lines and frames only
+from the sync pulses, checks every timing number (line length 1,600 clocks, HS pulse 192 clocks,
+525 lines per frame, VS pulse 2 lines) and saves each frame as an image. The unit test writes
+pixels and a palette colour over the bus and checks the saved picture pixel by pixel (each pixel
+must be a 2x2 block of the right colour). Two of its first findings: the VGA outputs had no reset
+(a fake sync pulse at power-up), and the frame numbering was off by one.
+
+![VGA test pattern from simulation](images/vga_test_pattern_sim.png)
+
+### Software: `sw/lib/gfx.c` and Snake (`sw/soc/snake.c`)
+The driver draws pixels, filled rectangles and text with a 5x7 font (scalable), sets palette
+colours and waits for vertical blank. Snake uses a 40x30 grid of 8x8 cells, a ring buffer for
+the snake's body, the timer for the game speed, KEY0/KEY1 (turn right/left) or W/A/S/D over the
+UART, and shows the score on screen, on the 7-segment displays and over the UART.
+
+The test (`tests/soc/test_snake.py`) plays a game in simulation: start with `d`, turn down with
+`s`, and the snake must move right along its row, turn, go straight down and crash into the
+bottom wall, which the test checks move by move. Then it checks the picture: walls, head, body and
+the GAME OVER text. The screenshot below is that frame, from the simulated VGA monitor:
+
+![Snake in simulation](images/snake_sim.png)
+
+### Interview questions
+
+**How does VGA work?**
+Analog RGB plus horizontal and vertical sync pulses. The monitor scans lines left to right and
+top to bottom; HSYNC ends each line and VSYNC each frame. For 640x480 at 60 Hz: 800 pixel times
+per line (640 visible) and 525 lines per frame (480 visible) at a 25.175 MHz pixel clock.
+
+**Why a palette instead of storing the colour directly?**
+Memory. 4 bits per pixel plus a 16-entry palette is half the memory of 8-bit colour, and you can
+still pick any of the 4,096 colours the board can show, 16 at a time. Changing a palette entry
+also recolours everything drawn with it instantly.
+
+**What is tearing and how do you avoid it?**
+If the picture changes while the beam is halfway down the screen, the top half shows the old
+frame and the bottom the new one. Drawing during vertical blank (or double buffering: draw into a
+second framebuffer and swap during blank) avoids it.
+
+**How did you test video output without a monitor?**
+A simulated monitor that locks onto the sync pulses like a real one, checks the timing, and saves
+frames as images, which the tests then check pixel by pixel.
