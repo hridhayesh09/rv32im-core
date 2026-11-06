@@ -75,11 +75,37 @@ Every number reported comes from an actual run.
 
 ## Stage 3: Graphics
 
-- VGA output with a framebuffer: on-chip at low resolution (e.g. 320x240) vs in SDRAM, with the tradeoff explained.
-- Simulation saves frames as PNGs, so a GIF can be made without the board.
-- A simple graphics driver in C.
-- A playable game (Snake or Tetris) controlled with the board's buttons or over UART.
-- A list of what to film for the demo video.
+### Framebuffer decision: on-chip, 320x240, 16 colours
+The numbers that decide it (block RAMs on the 10M50: 182 M9Ks of 9 Kbit):
+
+| Option | Block RAM | Notes |
+|---|---|---|
+| On-chip, 320x240, 8 bits/pixel | 75 M9K | 256 colours; too much RAM |
+| **On-chip, 320x240, 4 bits/pixel (16-colour palette)** | **38 M9K** | **chosen** |
+| SDRAM, any size | ~2 M9K (line buffer) | needs a second SDRAM master + arbiter; CPU pixel writes ~11 cycles; untested board SDRAM in the video path |
+
+- **On-chip** is simple and deterministic: the VGA side reads its own port of a dual-port RAM
+  every pixel, the CPU writes the other port, no contention. It costs block RAM.
+- **SDRAM** costs almost no block RAM, but the display must fetch each line ahead into a line
+  buffer while competing with the CPU and refresh for the SDRAM, and every CPU pixel write goes
+  through the slow SDRAM path.
+- 320x240 is doubled to 640x480 on the monitor; 16 colours from a programmable palette of the
+  board's 12-bit colours (4 bits per channel on the DE10-Lite's VGA DAC) is plenty for games.
+
+**Consequence for Stage 4 (written down now, not discovered later):** SoC (72 M9K) + framebuffer
+(38) = 110 of 182, leaving 72. The accelerator build in edge-ml-accelerator uses 169 M9K, most of
+it a 51 KB weight ROM. So Stage 4 can't copy that build as it is. The options: weights in SDRAM
+(loaded by the CPU) instead of ROM, a smaller CPU RAM (64 → 32 KB frees 32 M9K), or the
+framebuffer moved to SDRAM. Decided at the start of Stage 4, with real Quartus numbers.
+
+### Steps
+1. VGA timing (640x480 at 60 Hz from a 25 MHz pixel enable), framebuffer (CPU sees one byte per
+   pixel at `0x2000_0000`), palette and status registers (`0x1000_3000`), with unit tests.
+2. Integrate into the SoC; the simulation saves frames as PNG images.
+3. Graphics driver in C (pixels, rectangles, text, waiting for vertical blank).
+4. A playable game (Snake), controlled with the board's buttons or over the UART; a GIF from
+   simulation for the README.
+5. Quartus fit and timing; board checklist and what to film.
 
 ## Stage 4: AI accelerator
 
