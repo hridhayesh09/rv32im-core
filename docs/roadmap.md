@@ -109,11 +109,48 @@ framebuffer moved to SDRAM. Decided at the start of Stage 4, with real Quartus n
 
 ## Stage 4: AI accelerator
 
-- Attach the 16x16 systolic array from edge-ml-accelerator, as a coprocessor through custom
-  instructions or as a memory-mapped bus device (the choice and the reason are written up first).
-- Keep 16x16 unless Quartus says it does not fit; then decide what to shrink.
-- MNIST in C on the CPU: software only vs with the accelerator, bit-exact check, measured speedup.
-- A list of what to film for the demo video.
+### Interface decision: memory-mapped accelerator ("NPU") with local buffers
+The 16x16 array (`systolic_array.v` and `pe.v` from edge-ml-accelerator, unchanged) consumes one
+16-byte activation row per clock and produces sixteen 32-bit sums per clock.
+
+| Option | Data rate into the array | Cost |
+|---|---|---|
+| Custom instructions (custom-0/1) | at most 4 bytes per instruction (one register): the array idles >90 % | changes to the decoder, hazards and stalls for long operations, a Spike extension for lockstep |
+| **Memory-mapped device with local buffers** | **16 bytes per clock** from its own buffer, once loaded | buffer RAM (block RAM), a small sequencer |
+
+**Chosen: memory-mapped.** The CPU writes activations and weights into the accelerator's local
+buffers over the bus, then starts a whole tile computation with one register write; a sequencer
+streams the rows through the array at one per clock and accumulates the results in a local result
+buffer. Custom instructions pay off for small, frequent operations on register data (like a
+4-way int8 dot product), not for 16x16 tiles.
+
+### Memory budget (182 M9K)
+- SoC with VGA: 110. Left: 72.
+- Activation buffer: 1024 rows x 16 bytes (16 KB): 16 M9K. Result buffer: 256 rows x 16 x 32 bits
+  (16 KB): 16 M9K. Total 32, leaving 40 spare.
+- The MNIST weights (51 KB) don't stay on chip (edge-ml-accelerator's weight ROM was most of its
+  169 M9K): they live in **SDRAM**, and the CPU loads each 16x16 weight tile into the array
+  before using it. The test images also live in SDRAM. Both are loaded with an extended
+  bootloader (load data to any address).
+- DSP blocks: the array puts 128 PEs in DSP blocks (one per block) and 128 in logic; the CPU's
+  multiplier needs 4 more blocks: 132 of 144.
+
+### The workload: MNIST 784 → 64 → 10 (int8), bit-exact with edge-ml-accelerator's NumPy model
+- Software only: the whole network in C on the CPU (int8 x int8 → int32, requantize
+  `(acc * 9710 + 2^23) >> 24` clipped to 0..127, layer 2, argmax).
+- With the NPU: layer 1 as 49 x 4 tiles accumulated in the result buffer, requantize on the CPU,
+  layer 2 as 4 x 1 tiles; batches of images share each weight tile.
+- Checked: both paths give the same logits for every image, equal to the NumPy reference; speedup
+  measured with the timer, in simulation and on the board.
+
+### Steps
+1. NPU block (`wb_npu`): weight loading, activation/result buffers, sequencer, registers; unit
+   tests against NumPy matrix products (random and edge-case matrices, accumulate mode).
+2. Early Quartus fit of SoC + NPU (16x16): logic, DSP blocks, block RAM, timing. Shrink only if it
+   doesn't fit.
+3. Bootloader: load data to any address (SDRAM). Model export: weights and test images.
+4. MNIST in C, software and NPU versions; SoC simulation test: same logits as NumPy, speedup.
+5. Board checklist and what to film.
 
 ## Stage 5: Architect-level tradeoffs
 
