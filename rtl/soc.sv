@@ -6,6 +6,8 @@
 //   0x1000_2000  GPIO                (Wishbone)
 //   0x1000_3000  VGA registers       (Wishbone: palette, status)
 //   0x2000_0000  VGA framebuffer     (Wishbone: 320x240, one byte per pixel)
+//   0x1000_4000  NPU registers       (Wishbone)
+//   0x3000_0000  NPU buffers         (Wishbone: activations, results)
 //   0x4000_0000  SDRAM, 64 MB        (Wishbone; the first access waits for the 200 us init)
 //   0x8000_0000  on-chip RAM, 64 KB  (tightly coupled: no wait states)
 //   anything else                    (Wishbone; reads 0, writes ignored)
@@ -109,11 +111,14 @@ module soc #(
 
     // ---------------------------------------------------------------- Wishbone bridge
     // A bus access is captured when the core sends it (instruction leaving MEM) and driven on
-    // the bus while that instruction waits in WB; the core is frozen until the slave acks.
+    // the bus while that instruction waits in WB; the core is frozen until the access is done.
+    // The slave's read data and ack are registered here before the core sees them, so no path
+    // runs from inside a peripheral into the core in one cycle (one extra cycle per bus access).
 
     // Which slave an access goes to is decoded when the request is captured and kept in a
     // register, so the address decoder isn't on the path from a slave's ack to the core's stall.
-    typedef enum logic [2:0] { SLAVE_UART, SLAVE_TIMER, SLAVE_GPIO, SLAVE_VGA, SLAVE_SDRAM, SLAVE_NONE } slave_t;
+    typedef enum logic [2:0] { SLAVE_UART, SLAVE_TIMER, SLAVE_GPIO, SLAVE_VGA, SLAVE_NPU, SLAVE_SDRAM,
+                               SLAVE_NONE } slave_t;
 
     function automatic slave_t decode_slave(input logic [31:0] addr);
         if (addr[31:16] == 16'h1000) begin
@@ -122,10 +127,13 @@ module soc #(
                 4'h1:    return SLAVE_TIMER;
                 4'h2:    return SLAVE_GPIO;
                 4'h3:    return SLAVE_VGA;
+                4'h4:    return SLAVE_NPU;
                 default: return SLAVE_NONE;
             endcase
         end else if (addr[31:28] == 4'h2) begin
             return SLAVE_VGA;
+        end else if (addr[31:28] == 4'h3) begin
+            return SLAVE_NPU;
         end else if (addr[31:28] == 4'h4) begin
             return SLAVE_SDRAM;
         end else begin
@@ -135,7 +143,7 @@ module soc #(
 
     slave_t      slave;
     logic        bus_stb, bus_we, bus_ack;
-    logic [31:0] bus_adr, bus_dat_w, bus_dat_r;
+    logic [31:0] bus_adr, bus_dat_w, bus_dat_r, bus_rdata_q;
     logic [3:0]  bus_sel;
 
     always_ff @(posedge clk) begin
@@ -149,17 +157,18 @@ module soc #(
             bus_sel   <= (dmem_we != 4'b0000) ? dmem_we : 4'b1111;
             slave     <= decode_slave(dmem_addr);
         end else if (bus_ack) begin
-            bus_stb <= 1'b0;
+            bus_stb     <= 1'b0;
+            bus_rdata_q <= bus_dat_r;
         end
     end
 
-    assign dmem_stall = bus_stb && !bus_ack;
+    assign dmem_stall = bus_stb;    // a register: the access ends the cycle after the ack
 
     always_comb begin
         case (data_target_q)
             TARGET_ROM: dmem_rdata = rom_b_rdata;
             TARGET_RAM: dmem_rdata = ram_b_rdata;
-            default:    dmem_rdata = bus_dat_r;
+            default:    dmem_rdata = bus_rdata_q;
         endcase
     end
 
@@ -168,8 +177,8 @@ module soc #(
     localparam logic [15:0] UART_DIVISOR_16 = UART_DIVISOR[15:0];
 
 
-    logic [31:0] uart_dat_r, timer_dat_r, gpio_dat_r, vga_dat_r, sdram_dat_r;
-    logic        uart_ack, timer_ack, gpio_ack, vga_ack, sdram_ack, none_ack;
+    logic [31:0] uart_dat_r, timer_dat_r, gpio_dat_r, vga_dat_r, npu_dat_r, sdram_dat_r;
+    logic        uart_ack, timer_ack, gpio_ack, vga_ack, npu_ack, sdram_ack, none_ack;
 
     wb_uart #(.DEFAULT_DIVISOR(UART_DIVISOR_16)) u_uart (
         .clk, .rst,
@@ -218,6 +227,17 @@ module soc #(
         .vga_r, .vga_g, .vga_b, .vga_hs, .vga_vs
     );
 
+    wb_npu u_npu (
+        .clk, .rst,
+        .wb_stb   (bus_stb && slave == SLAVE_NPU),
+        .wb_we    (bus_we),
+        .wb_adr   (bus_adr),
+        .wb_dat_w (bus_dat_w),
+        .wb_sel   (bus_sel),
+        .wb_dat_r (npu_dat_r),
+        .wb_ack   (npu_ack)
+    );
+
     sdram_ctrl u_sdram (
         .clk, .rst,
         .wb_stb   (bus_stb && slave == SLAVE_SDRAM),
@@ -243,6 +263,7 @@ module soc #(
             SLAVE_TIMER: begin bus_ack = timer_ack; bus_dat_r = timer_dat_r; end
             SLAVE_GPIO:  begin bus_ack = gpio_ack;  bus_dat_r = gpio_dat_r;  end
             SLAVE_VGA:   begin bus_ack = vga_ack;   bus_dat_r = vga_dat_r;   end
+            SLAVE_NPU:   begin bus_ack = npu_ack;   bus_dat_r = npu_dat_r;   end
             SLAVE_SDRAM: begin bus_ack = sdram_ack; bus_dat_r = sdram_dat_r; end
             default:     begin bus_ack = none_ack;  bus_dat_r = '0;          end
         endcase

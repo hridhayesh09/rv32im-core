@@ -71,6 +71,27 @@ module sdram_model #(
         end
     end
 
+    // Simulation backdoor: +sdram_init=<hex file of 32-bit words> preloads the memory from
+    // SDRAM address 0 (CPU address 0x4000_0000), as if it had been written through the
+    // controller: word w at bank w[10:9], row w[23:11], columns {w[8:0],0} (low halfword) and
+    // {w[8:0],1} (high halfword), the controller's address mapping.
+    initial begin
+        string path;
+        int    fd, w;
+        logic [31:0] word;
+        if ($value$plusargs("sdram_init=%s", path)) begin
+            fd = $fopen(path, "r");
+            w = 0;
+            while ($fscanf(fd, "%h", word) == 1) begin
+                mem[key(w[10:9], w[23:11], {w[8:0], 1'b0})] = word[15:0];
+                mem[key(w[10:9], w[23:11], {w[8:0], 1'b1})] = word[31:16];
+                w++;
+            end
+            $fclose(fd);
+            $display("SDRAM model: preloaded %0d words from %s", w, path);
+        end
+    end
+
     always @(posedge clk) begin   // a behavioural model: blocking assignments on purpose
         logic [3:0] cmd;
         cmd = {cs_n, ras_n, cas_n, we_n};

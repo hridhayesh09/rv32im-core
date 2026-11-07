@@ -33,7 +33,7 @@ async def run_until_done(dut, max_cycles):
     cocotb.start_soon(uart_monitor(dut, received))
     for _ in range(max_cycles // 1000):
         await ClockCycles(dut.clk, 1000)
-        if b"DONE" in bytes(received):
+        if b"DONE\r\n" in bytes(received):   # the whole line, not just the word
             break
     text = bytes(received).decode()
     for line in text.splitlines():

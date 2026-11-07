@@ -60,7 +60,9 @@ module wb_npu (
     // 4 lanes of 1024 x 32 bits: the CPU writes one lane, the sequencer reads all 4 (one row).
     logic [9:0]   a_raddr;
     logic [127:0] a_rdata;
-    for (genvar lane = 0; lane < 4; lane++) begin : g_a
+    genvar lane;
+    generate
+    for (lane = 0; lane < 4; lane++) begin : g_a
         sdp_ram #(.WIDTH(32), .DEPTH(1024)) u_a (
             .clk,
             .we    (access && wb_we && to_a && {30'b0, wb_adr[3:2]} == lane),
@@ -70,6 +72,7 @@ module wb_npu (
             .rdata (a_rdata[32*lane +: 32])
         );
     end
+    endgenerate
 
     // ---------------------------------------------------------------- C buffer
     // 16 lanes of 256 x 32 bits: the sequencer writes whole rows; the read port is shared by the
@@ -78,7 +81,8 @@ module wb_npu (
     logic [7:0]   c_waddr, c_raddr, seq_c_raddr;
     logic [511:0] c_wdata, c_rdata;
     assign c_raddr = busy ? seq_c_raddr : wb_adr[13:6];
-    for (genvar lane = 0; lane < N; lane++) begin : g_c
+    generate
+    for (lane = 0; lane < N; lane++) begin : g_c
         sdp_ram #(.WIDTH(32), .DEPTH(256)) u_c (
             .clk,
             .we    (c_we),
@@ -88,6 +92,7 @@ module wb_npu (
             .rdata (c_rdata[32*lane +: 32])
         );
     end
+    endgenerate
 
     // ---------------------------------------------------------------- the array
     logic         w_row_we, in_valid, pre_valid, out_valid;

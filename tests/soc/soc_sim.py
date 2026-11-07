@@ -17,7 +17,8 @@ UART_DIVISOR = 8   # clock cycles per bit in simulation (the board uses 434 for 
 
 RTL_SOURCES = ["rv_pkg.sv", "alu.sv", "regfile.sv", "decoder.sv", "muldiv.sv", "dpram.sv",
                "core.sv", "wb_uart.sv", "wb_timer.sv", "wb_gpio.sv", "fb_ram.sv", "wb_vga.sv",
-               "sdram_ctrl.sv", "soc.sv"]
+               "sdram_ctrl.sv", "npu/lint.vlt", "npu/pe.v", "npu/systolic_array.v", "npu/sdp_ram.sv",
+               "npu/wb_npu.sv", "soc.sv"]
 TB_SOURCES = ["sdram_model.sv", "vga_capture.sv", "tb_soc.sv"]
 
 
