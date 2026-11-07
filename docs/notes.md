@@ -928,3 +928,91 @@ frames as images, which the tests then check pixel by pixel.
 Quartus (whole SoC with VGA): 5,197 logic elements (10 %), 897,024 memory bits in **110 of 182
 M9K blocks** (72 for the SoC + 38 for the framebuffer, as planned), 8 multipliers, Fmax 52.63 MHz
 at slow 85 °C, setup slack +1.001 ns at 50 MHz. That leaves 72 M9K for Stage 4.
+
+## Stage 4: the AI accelerator (NPU)
+
+### Why memory-mapped and not custom instructions
+The 16x16 array takes a 16-byte row of activations every clock. A custom instruction can only
+hand it what fits in registers (4 bytes), so the array would sit idle most of the time, and the
+pipeline and the Spike lockstep would need changes too. So the array is a **memory-mapped
+device with its own buffers**: the CPU fills the buffers over the bus, then starts a whole tile
+product with one register write, and a sequencer streams rows through the array at one per clock.
+
+### The NPU (`rtl/npu/wb_npu.sv`)
+- **The array** (`systolic_array.v`, `pe.v`, copied unchanged from edge-ml-accelerator): weight
+  stationary. Each of the 256 PEs holds one weight; activations flow right, partial sums flow down,
+  and a result row comes out every clock, 31 clocks after its input row.
+- **Weight loading:** 64 writes per 16x16 tile; every 4th write loads one PE row.
+- **A buffer** (1,024 rows of 16 int8) and **C buffer** (256 rows of 16 int32): simple dual-port
+  block RAM, the style Quartus mapped reliably in edge-ml-accelerator.
+- **Sequencer:** `C[c_base + i*c_stride] (+)= A[a_base + i*a_stride] x W` for `i < count`. The base
+  and stride let MNIST's 784 inputs be stored as 49 rows per image, and the **accumulate** mode adds
+  each 16x16 tile's partial sums into the result buffer, so a long dot product (784 terms) is
+  summed on the NPU. For accumulate, the old result row is read one clock early (the array's
+  `pre_valid`), so it's ready when the new row comes out.
+
+### Where everything lives (block RAM budget)
+The chip has 182 block RAMs. The SoC + VGA use 110, the NPU buffers 32, and Quartus puts the
+array's skew/deskew shift registers into block RAM too: 165 in total. The 51 KB of MNIST weights
+don't fit on chip next to all that, so they live in **SDRAM** with the test images and the NumPy
+reference answers (`tools/export_mnist.py`), sent with the bootloader's new `LOAD` command. The CPU
+loads each 16x16 weight tile from SDRAM into the array before using it.
+
+### MNIST (`sw/soc/mnist.c`)
+The same int8 network as edge-ml-accelerator (784 → 64 → 10): inputs quantized with a 256-entry
+table, layer 1, requantize `(acc * 9710 + 2^23) >> 24` clipped to 0..127 (the clip is also the
+ReLU), layer 2, argmax. Two versions:
+- **Software:** everything on the CPU.
+- **NPU:** batches of 20 images. Layer 1 is 4 output tiles × 49 input tiles accumulated on the
+  NPU; the CPU adds the bias, requantizes, and writes the 64 hidden values back as activations;
+  layer 2 is 4 input tiles. Biases, requantize and argmax stay on the CPU.
+
+Every image's 10 logits from both versions are compared with NumPy's, stored next to the images.
+
+### Results on the board ([log](results/board_2026-11-07.md))
+| | Images | Correct | Cycles per image |
+|---|---|---|---|
+| Software | 10 | 10 | 856,963 (17.1 ms) |
+| NPU | 200 | 199 (99.5 %, the same as NumPy) | 22,263 (445 us) |
+
+**38.49x faster, all logits bit-exact.** In simulation (2 and 20 images): software 700,853, NPU
+22,179 cycles per image. The NPU agrees to 0.4 %; **software is 22 % slower on the board than in
+simulation, not yet explained** (same instructions; the difference must come from memory timing
+on the real board).
+
+Where the NPU's time goes: the CPU still moves every weight from SDRAM to the array (49 x 4 + 4
+tiles x 64 words per batch, roughly 11-14 cycles per SDRAM word) and quantizes and writes every
+input. The array itself needs only about 50 cycles per tile. That makes data movement the next
+thing to improve: a DMA engine that copies weight tiles from SDRAM to the NPU on its own, or
+keeping the weights on chip if block RAM allows.
+
+### Other things the board run found
+- The FPGA build missed 50 MHz by 0.127 ns once the array was in: the slowest path ran from a
+  peripheral's read data through the bus and into the CPU's forwarding logic. Registering the bus
+  read data and the stall in the bridge (one more cycle per bus access) gave +2.103 ns.
+- The bootloader's `LOAD` could hang if data arrived during the SDRAM controller's 200 us power-up
+  sequence (the first SDRAM write stalls, UART bytes are lost). The bootloader now touches SDRAM
+  before printing `ready`.
+
+### Interview questions
+
+**Why didn't you use custom instructions for the accelerator?**
+Bandwidth. The array consumes 16 bytes per clock; one instruction can pass 4. A memory-mapped
+device with local buffers lets the array run at full speed once the data is there. Custom
+instructions are better for small, frequent operations on register data.
+
+**Your accelerator is 38x faster. What limits it?**
+Data movement, not compute: the CPU copies each weight tile from SDRAM into the array and every
+input into the activation buffer. The array computes a tile in about 50 cycles; loading its 64
+weight words from SDRAM costs far more. The fix is a DMA engine (or on-chip weights), so the CPU
+isn't the copy engine.
+
+**How did you check the accelerator is correct?**
+Unit tests of every NPU operation against NumPy (including the extremes, -128 x -128 sums, and the
+accumulate mode), then the whole network: every logit of every image, from both the software and
+the NPU path, compared with NumPy, in simulation and on the board.
+
+**How do you do int8 inference without floating point?**
+Integer matrix products give int32 sums; scaling back to int8 is a multiply by a fixed-point
+constant and a rounding shift (`(acc * 9710 + 2^23) >> 24`), clipped to the int8 range. That's the
+same idea TensorFlow Lite uses, and it's exact, so the hardware can match the reference bit for bit.

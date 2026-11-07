@@ -1,14 +1,22 @@
-// UART bootloader, in the boot ROM. Receives a program over the serial port into on-chip RAM
-// and runs it, so new programs don't need an FPGA rebuild.
+// UART bootloader, in the boot ROM. Receives data and programs over the serial port, so new
+// programs don't need an FPGA rebuild.
 //
-// Protocol (host side: tools/upload.py), all numbers little-endian:
-//   host -> "BOOT", length (4 bytes), the program bytes, CRC-32 of the program (4 bytes)
-//   board -> "OK\n" and runs the program, or "ERR ...\n" and waits again
-// Sending a single 'R' instead reruns the program already in RAM (e.g. after pressing reset).
+// Commands (host side: tools/upload.py), numbers little-endian, each followed by a CRC-32 of
+// the bytes sent:
+//   "BOOT", length, program bytes, crc   -> stored at 0x8000_0000, "OK", and run
+//   "LOAD", address, length, bytes, crc  -> stored at address (SDRAM, or RAM below 48 KB),
+//                                           "OK", and wait for the next command
+//   'R' as the first byte after "ready"  -> run the program already in RAM again
+// A bad length, address or CRC gets "ERR ..." and the bootloader waits again.
 #include "soc.h"
 
 #define RAM_BASE    0x80000000u
 #define MAX_PROGRAM (48u << 10)   // above that: the bootloader's own variables and stack
+#define SDRAM_BASE  0x40000000u
+#define SDRAM_SIZE  (64u << 20)
+
+#define CMD_BOOT 0x424F4F54u      // "BOOT", as the last 4 bytes received
+#define CMD_LOAD 0x4C4F4144u      // "LOAD"
 
 static uint32_t read_u32(void)
 {
@@ -30,6 +38,26 @@ static uint32_t crc32(const volatile uint8_t *p, uint32_t n)
     return ~crc;
 }
 
+static int fits(uint32_t addr, uint32_t length, uint32_t base, uint32_t size)
+{
+    return length <= size && addr >= base && addr - base <= size - length;
+}
+
+// Receive length bytes into dst and check the CRC that follows. Nothing else in the loop: at
+// 115200 baud a byte arrives every ~4,300 cycles, and the UART only holds one.
+static int receive(volatile uint8_t *dst, uint32_t length)
+{
+    for (uint32_t i = 0; i < length; i++)
+        dst[i] = (uint8_t)uart_getc();
+    uint32_t expected = read_u32();
+    if (crc32(dst, length) != expected) {
+        uart_puts("ERR crc\n");
+        return 0;
+    }
+    uart_puts("OK\n");
+    return 1;
+}
+
 static void run_program(void)
 {
     uart_puts("starting program\n");
@@ -40,42 +68,43 @@ static void run_program(void)
 
 int main(void)
 {
+    // The first SDRAM access waits for the controller's 200 us power-up sequence. Do it now, so
+    // a LOAD into SDRAM can't stall while UART bytes keep arriving (the UART holds only one).
+    (void)*(volatile uint32_t *)SDRAM_BASE;
     uart_puts("\nrv32im-core bootloader\n");
     for (;;) {
-        GPIO_LEDS = 1;             // LED0: waiting for a program
+        GPIO_LEDS = 1;             // LED0: waiting
         uart_puts("ready\n");
 
-        // Wait for "BOOT" (or 'R').
-        const char *magic = "BOOT";
-        int matched = 0;
-        while (matched < 4) {
+        // Wait for a command: the last 4 bytes received spell BOOT or LOAD.
+        uint32_t last4 = 0;
+        for (int n = 0;; n++) {
             int c = uart_getc();
-            if (c == 'R' && matched == 0)
+            if (n == 0 && c == 'R')
                 run_program();
-            if (c == magic[matched])
-                matched++;
-            else
-                matched = (c == 'B');
+            last4 = last4 << 8 | (uint32_t)c;
+            if (last4 == CMD_BOOT || last4 == CMD_LOAD)
+                break;
         }
 
-        uint32_t length = read_u32();
-        if (length == 0 || length > MAX_PROGRAM) {
-            uart_puts("ERR size\n");
-            continue;
+        if (last4 == CMD_BOOT) {
+            uint32_t length = read_u32();
+            if (length == 0 || length > MAX_PROGRAM) {
+                uart_puts("ERR size\n");
+                continue;
+            }
+            if (receive((volatile uint8_t *)RAM_BASE, length))
+                run_program();
+        } else {
+            uint32_t addr = read_u32();
+            uint32_t length = read_u32();
+            if (length == 0 || !(fits(addr, length, SDRAM_BASE, SDRAM_SIZE) ||
+                                 fits(addr, length, RAM_BASE, MAX_PROGRAM))) {
+                uart_puts("ERR address\n");
+                continue;
+            }
+            GPIO_LEDS = 2;         // LED1: receiving data
+            receive((volatile uint8_t *)addr, length);
         }
-
-        // Receive straight into RAM. Nothing else in this loop: at 115200 baud a byte arrives
-        // every ~4,300 cycles, and the UART only holds one.
-        volatile uint8_t *dst = (volatile uint8_t *)RAM_BASE;
-        for (uint32_t i = 0; i < length; i++)
-            dst[i] = (uint8_t)uart_getc();
-
-        uint32_t expected = read_u32();
-        if (crc32(dst, length) != expected) {
-            uart_puts("ERR crc\n");
-            continue;
-        }
-        uart_puts("OK\n");
-        run_program();
     }
 }

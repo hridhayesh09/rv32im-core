@@ -103,6 +103,41 @@ async def bootloader(dut):
     dut._log.info(f"uploaded {len(image)} bytes")
 
 
+@cocotb.test()
+async def bootloader_load(dut):
+    """LOAD 16 bytes into SDRAM, then BOOT a program that prints them back."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    dut.rxd.value = 1
+    dut.sw.value = 0
+    dut.key_n.value = 0b11
+    dut.rst.value = 1
+    await ClockCycles(dut.clk, 3)
+    dut.rst.value = 0
+    received = []
+    cocotb.start_soon(uart_monitor(dut, received))
+    while b"ready" not in bytes(received):
+        await ClockCycles(dut.clk, 1000)
+
+    data = b"LOAD works ok!\r\n"
+    await uart_send(dut, b"LOAD" + struct.pack("<II", 0x40001000, len(data)) + data +
+                    struct.pack("<I", zlib.crc32(data)))
+    while bytes(received).count(b"ready") < 2:
+        await ClockCycles(dut.clk, 1000)
+    assert b"OK" in bytes(received)
+
+    image = Path(os.environ["PROGRAM_BIN"]).read_bytes()
+    await uart_send(dut, b"BOOT" + struct.pack("<I", len(image)) + image +
+                    struct.pack("<I", zlib.crc32(image)))
+    for _ in range(1000):
+        await ClockCycles(dut.clk, 1000)
+        if b"DONE\r\n" in bytes(received):
+            break
+    text = bytes(received).decode()
+    for line in text.splitlines():
+        dut._log.info(f"uart: {line}")
+    assert "loaded: LOAD works ok!" in text
+
+
 @pytest.fixture(scope="module")
 def soc_runner():
     return build_soc()
@@ -133,4 +168,18 @@ def test_bootloader(soc_runner):
         plusargs=[f"+bootrom={bootrom}"],   # RAM starts empty: the program comes over the UART
         extra_env={"PROGRAM_BIN": str(hexfile.with_suffix(".bin"))},
         results_xml=str(bootrom.with_suffix(".result.xml")),
+    )
+
+
+def test_bootloader_load(soc_runner):
+    bootrom = build_bootloader()
+    hexfile = build_program(SW / "soc" / "loadcheck.c")
+    soc_runner.test(
+        hdl_toplevel="tb_soc",
+        test_module="test_soc",
+        testcase="bootloader_load",
+        test_dir=HERE,
+        plusargs=[f"+bootrom={bootrom}"],
+        extra_env={"PROGRAM_BIN": str(hexfile.with_suffix(".bin"))},
+        results_xml=str(hexfile.with_suffix(".result.xml")),
     )
