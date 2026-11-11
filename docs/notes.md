@@ -1406,7 +1406,7 @@ from the default (32-entry BTB, gshare with 256 counters, 4-entry RAS, 4 KB dire
 | SDRAM, 4 KB 2-way | 2.648 | 1.199 | |
 
 What it says:
-- **Prediction is worth 17 %** (2.315 -> 2.698): without it, 60 % of branches send fetch the wrong way.
+- **Prediction is worth 16.5 %** (2.315 -> 2.698): without it, 60 % of branches send fetch the wrong way.
 - **gshare doesn't beat bimodal at 256 counters** on CoreMark (2.694 vs 2.714): the history
   spreads each branch over several counters, which then alias. With 1024 counters gshare is the
   best of all (2.719). The BTB size matters more than the direction scheme: 16 entries miss
@@ -1520,3 +1520,56 @@ misses, mispredicts per frame) before changing anything.
 That's what doomgeneric does by default (draw into a buffer, then copy). Pointing its buffer at
 video memory removes one 64,000-byte copy per frame. It only works because the video memory takes
 word writes and Doom never reads it back.
+
+## Stage 5: the tradeoff table
+
+Cost from Quartus (`python tools/quartus_sweep.py`, CPU-only build with the 8-bit VGA mode, raw
+data in [results/quartus_sweep_2026-11-11.csv](results/quartus_sweep_2026-11-11.csv)); performance
+from CoreMark in simulation (`python tools/coremark_sweep.py`, 2 iterations), and on the board where
+marked. One change at a time from the default: 32-entry BTB, gshare with 256 counters, 4-entry
+return stack, 4 KB direct-mapped caches.
+
+**Branch prediction** (CoreMark from on-chip RAM, so memory doesn't blur it):
+
+| Predictor | LEs | M9K | CoreMark/MHz | Branches mispredicted | Fmax |
+|---|---|---|---|---|---|
+| none | 12,402 | 147 | 2.315 | 60.2 % | 54.06 MHz |
+| bimodal, no return stack | 13,597 | 149 | 2.714 | 11.2 % | 54.04 MHz |
+| gshare, no return stack | 13,701 | 149 | 2.694 | 13.3 % | 50.40 MHz |
+| **gshare + return stack (default)** | **14,059** | **149** | **2.698** (board: **2.699**) | 12.9 % | 55.11 MHz |
+| default, 16-entry BTB | 13,949 | 149 | 2.660 | 17.0 % | 54.25 MHz |
+| default, 64-entry BTB | 14,070 | 149 | 2.708 | 11.8 % | 52.85 MHz |
+| default, 1024 counters | 16,514 | 149 | 2.719 | 10.7 % | 55.37 MHz |
+
+**Caches** (CoreMark from SDRAM, everything through the caches):
+
+| Caches (each) | LEs | M9K | CoreMark/MHz | Fmax |
+|---|---|---|---|---|
+| 1 KB direct-mapped | 12,111 | 149 | 2.314 | 53.81 MHz |
+| 2 KB direct-mapped | 12,815 | 149 | 2.564 | 54.00 MHz |
+| **4 KB direct-mapped (default)** | **14,059** | **149** | **2.649** (board: **2.661**) | 55.11 MHz |
+| 8 KB direct-mapped | 16,635 | 158 | 2.680 | 54.49 MHz |
+| 1 KB 2-way | 12,646 | 159 | 2.435 | 51.86 MHz |
+| 4 KB 2-way | 14,928 | 159 | 2.648 | 49.34 MHz (misses 50) |
+
+What the table says:
+- **The predictor is the best buy**: 1,657 LEs and 2 M9K (12% of this build's logic) for +16.5%
+  CoreMark. Every predictor column beats "none" by far; the differences between schemes are small.
+- **Bigger tables give little here**: 4x the counters costs 2,455 LEs for +0.8%. The BTB size
+  matters more than the direction scheme (16 entries: 17% mispredicted).
+- **Cache size has a knee at 2 to 4 KB** for CoreMark: 1 KB to 2 KB is +10.8%, 4 KB to 8 KB only
+  +1.2% for 2,576 LEs and 9 M9K. Logic grows with cache size because the valid and dirty bits are
+  flip-flops, read through a mux of one bit per line.
+- **2-way helps only small caches**: +5.2% at 1 KB, nothing at 4 KB, and it costs 10 more M9K and
+  the slowest timing of all (the 4 KB 2-way build misses 50 MHz).
+- **Fmax moves by a few MHz from build to build** with no design change: the default configuration
+  compiled at 51.03, 54.34 and 55.11 MHz in different builds. Fmax differences below ~4 MHz in this
+  table are placement noise, not the configuration.
+- The default (gshare + return stack, 4 KB direct-mapped) is within 1.2% of the best CoreMark in each
+  table at a moderate cost, and meets 50 MHz.
+
+The first attempt at this sweep gave wrong numbers: Quartus reused a synthesized module from an
+earlier build even though its parameters had changed, so several configurations came out identical
+(they were all really the 1 KB cache build). Now every build starts from an empty Quartus database,
+and the script checks in the synthesis report that the branch predictor got the requested
+`BHT_BITS`.

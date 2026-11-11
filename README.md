@@ -14,7 +14,7 @@ SystemVerilog, grown into a system-on-chip on the Terasic DE10-Lite (Intel MAX 1
 | 2 | SoC: Wishbone bus, boot ROM, SDRAM, UART, timer, GPIO, UART bootloader | **runs on the DE10-Lite**: bootloader, hello, 64 MB SDRAM test ([board log](docs/results/board_2026-11-07.md)) |
 | 3 | VGA framebuffer, graphics driver, a playable game | **runs on the DE10-Lite**: Snake playable on a real VGA monitor with the board's buttons |
 | 4 | Systolic array accelerator, MNIST software vs accelerator | **runs on the DE10-Lite**: 16x16 NPU, MNIST bit-exact, 38.49x faster than software |
-| 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | done on the board; cost table in progress |
+| 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | **runs on the DE10-Lite**: 2.70 CoreMark/MHz; [tradeoff table](docs/notes.md#stage-5-the-tradeoff-table) |
 | Doom | doomgeneric with picolibc, 8-bit VGA mode, keyboard over the UART | **runs on the DE10-Lite**: playable with the laptop's keyboard, 11.7 fps in Doom's timedemo |
 | 6 | OpenLane on Sky130 | flow, ASIC top level and gate-level test ready ([docs/asic.md](docs/asic.md)); needs Nix installed to run |
 
@@ -113,6 +113,17 @@ the VGA monitor), played with the laptop's keyboard over the serial port (`tools
 |---|---|---|---|---|
 | Full SoC or CPU-only | on-chip RAM | **2.699** | 134.9 | 1.177 |
 | CPU-only, 4 KB I$ + 4 KB D$ | SDRAM through the caches | **2.661** | 133.0 | 1.194 |
+
+**Tradeoffs** ([full table](docs/notes.md#stage-5-the-tradeoff-table): Quartus cost of each
+configuration against CoreMark in simulation)
+
+| Change from the default | Logic elements | CoreMark/MHz |
+|---|---|---|
+| Default: gshare + return stack, 4 KB I$ and D$ | 14,059 | 2.698 (RAM) / 2.649 (SDRAM) |
+| No branch predictor | -1,657 | 2.315 (-14 %) |
+| 4x the predictor counters | +2,455 | 2.719 (+0.8 %) |
+| 1 KB caches | -1,948 | 2.314 from SDRAM (-13 %) |
+| 8 KB caches | +2,576 (+9 M9K) | 2.680 from SDRAM (+1.2 %) |
 
 **MNIST on the board** (784 → 64 → 10, int8; [board log](docs/results/board_2026-11-11.md))
 
