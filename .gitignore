@@ -22,3 +22,7 @@ db/
 incremental_db/
 output_files/
 *.qws
+
+# ASIC flow output (Stage 6)
+asic/build/
+asic/runs/

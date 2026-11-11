@@ -16,7 +16,7 @@ SystemVerilog, grown into a system-on-chip on the Terasic DE10-Lite (Intel MAX 1
 | 4 | Systolic array accelerator, MNIST software vs accelerator | **runs on the DE10-Lite**: 16x16 NPU, MNIST bit-exact, 38.49x faster than software |
 | 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | done on the board; cost table in progress |
 | Doom | doomgeneric with picolibc, 8-bit VGA mode, keyboard over the UART | **runs on the DE10-Lite**: playable with the laptop's keyboard, 11.7 fps in Doom's timedemo |
-| 6 | OpenLane on Sky130 | planned |
+| 6 | OpenLane on Sky130 | flow, ASIC top level and gate-level test ready ([docs/asic.md](docs/asic.md)); needs Nix installed to run |
 
 The full plan for each stage is in [docs/roadmap.md](docs/roadmap.md).
 Plain-English explanations of every part of the design, with interview questions,

@@ -1,7 +1,13 @@
 // Simple dual-port RAM for the caches: one write port with byte enables, one read port with a
 // read enable (the output holds while it's low). Synchronous read: data the cycle after.
-// Simulation uses the behavioural model; the FPGA build instantiates the block-RAM primitive
-// (automatic inference was unreliable for this shape, see dpram.sv).
+// Simulation and the ASIC flow (ASIC defined: flip-flops) use the behavioural model; the FPGA
+// build instantiates the block-RAM primitive (automatic inference was unreliable for this shape,
+// see dpram.sv).
+`ifdef VERILATOR
+ `define CACHE_RAM_BEHAVIOURAL
+`elsif ASIC
+ `define CACHE_RAM_BEHAVIOURAL
+`endif
 module cache_ram #(
     parameter int WIDTH = 32,               // a multiple of 8
     parameter int DEPTH = 256
@@ -14,7 +20,7 @@ module cache_ram #(
     input  logic [$clog2(DEPTH)-1:0] raddr,
     output logic [WIDTH-1:0]         rdata
 );
-`ifdef VERILATOR
+`ifdef CACHE_RAM_BEHAVIOURAL
     logic [WIDTH-1:0] mem [DEPTH];
 
     always_ff @(posedge clk) begin

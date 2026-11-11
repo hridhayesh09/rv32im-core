@@ -13,6 +13,7 @@ the temporary revision to it).
 import csv
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +46,17 @@ def report_value(path, pattern):
     return m.group(1) if m else ""
 
 
+def bpred_bht_bits(map_report):
+    """BHT_BITS of the branch predictor instance, from the synthesis report's parameter tables."""
+    section = ""
+    for line in map_report.read_text(errors="replace").splitlines():
+        if line.startswith("; Parameter Settings for User Entity Instance:"):
+            section = line
+        elif section.rstrip(" ;").endswith("bpred:u_bpred") and line.startswith("; BHT_BITS"):
+            return int(line.split(";")[2])
+    return None
+
+
 def main():
     only = sys.argv[1] if len(sys.argv) > 1 else ""
     base = (FPGA / "rv32im_cpu.qsf").read_text()
@@ -73,6 +85,11 @@ def sweep(only, base, out, new_file, done):
             params = {**DEFAULT, **changes}
             qsf = base + "".join(f"set_parameter -name {k} {v}\n" for k, v in params.items())
             (FPGA / "rv32im_sweep.qsf").write_text(qsf)
+            # Start from an empty database: Quartus otherwise reuses the synthesized netlist of
+            # a module from an earlier build even when its parameters changed (seen here: the
+            # branch predictor kept BHT_BITS = 8 after it was set to 10).
+            for d in ("db", "incremental_db"):
+                shutil.rmtree(FPGA / d, ignore_errors=True)
             log = ROOT / "build" / f"quartus_sweep_{name}.log"
             with log.open("w") as lf:
                 result = subprocess.run([str(QUARTUS_BIN / "quartus_sh"), "--flow", "compile",
@@ -82,6 +99,8 @@ def sweep(only, base, out, new_file, done):
                 print(f"{name}: compile failed, see {log}")
                 continue
             reports = FPGA / "output_files"
+            for ext in ("fit.rpt", "map.rpt", "sta.rpt"):   # kept per configuration
+                shutil.copy(reports / f"rv32im_sweep.{ext}", ROOT / "build" / f"quartus_sweep_{name}.{ext}")
             les = report_value(reports / "rv32im_sweep.fit.summary",
                                r"Total logic elements : ([\d,]+)").replace(",", "")
             m9k = report_value(reports / "rv32im_sweep.fit.rpt", r"^; M9Ks\s+; (\d+) /")
@@ -89,6 +108,11 @@ def sweep(only, base, out, new_file, done):
                                 r"^; ([\d.]+) MHz ; [\d.]+ MHz\s+; clk50")
             slack = report_value(reports / "rv32im_sweep.sta.summary",
                                  r"Setup 'clk50'\s*\nSlack : (-?[\d.]+)")
+            # Check that the parameters really reached the predictor.
+            used = bpred_bht_bits(ROOT / "build" / f"quartus_sweep_{name}.map.rpt")
+            if used is not None and used != params["BHT_BITS"]:
+                print(f"{name}: predictor built with BHT_BITS={used}, wanted {params['BHT_BITS']}")
+                continue
             writer.writerow([name, les, m9k, fmax, slack])
             f.flush()
             print(f"{name}: {les} LEs, {m9k} M9K, {fmax} MHz, slack {slack} ns", flush=True)

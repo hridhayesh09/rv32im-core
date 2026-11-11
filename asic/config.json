@@ -1,0 +1,10 @@
+{
+    "DESIGN_NAME": "rv32im_asic",
+    "VERILOG_FILES": "dir::build/rv32im_asic.v",
+    "PDK": "sky130A",
+    "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+    "CLOCK_PORT": "clk",
+    "CLOCK_PERIOD": 20.0,
+    "FP_CORE_UTIL": 35,
+    "PL_TARGET_DENSITY_PCT": 45
+}

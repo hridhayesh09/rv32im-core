@@ -13,7 +13,7 @@ from programs import ROOT, build, spike_trace
 HERE = Path(__file__).resolve().parent
 RTL_SOURCES = ["rv_pkg.sv", "alu.sv", "regfile.sv", "decoder.sv", "muldiv.sv", "csr.sv", "dpram.sv",
                "bpred.sv", "core.sv"]
-CACHE_SOURCES = ["cache_ram.sv", "cache.sv", "mem_arbiter.sv"]
+CACHE_SOURCES = ["cache_ram.sv", "cache.sv", "mem_arbiter.sv", "rv32im_asic.sv"]
 
 # Cache configurations the lockstep tests also run through (tb/tb_cached.sv). Tiny caches, so
 # lines are evicted (and dirty lines written back) all the time.
