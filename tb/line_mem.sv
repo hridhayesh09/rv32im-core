@@ -29,6 +29,11 @@ module line_mem #(
         if ($value$plusargs("program=%s", path)) $readmemh(path, mem);
     end
 
+    // Word index of the line's first word (the address is held for the whole request). A wire,
+    // not an automatic variable, so Icarus (gate-level simulation) accepts it too.
+    logic [17:0] base;
+    assign base = {addr[19:4], 2'b00};
+
     always_ff @(posedge clk) begin
         if (rst) begin
             ack  <= 1'b0;
@@ -42,12 +47,11 @@ module line_mem #(
                 wait_cycles <= random_stalls ? 1 + int'(lfsr[3:0]) : LATENCY;
             end else if (busy) begin
                 if (wait_cycles <= 1) begin
-                    automatic int base = int'(addr[19:4]) * 4;
                     busy <= 1'b0;
                     ack  <= 1'b1;
                     for (int i = 0; i < 4; i++) begin
-                        if (we) mem[base + i] = wdata[32*i +: 32];
-                        rdata[32*i +: 32] <= mem[base + i];
+                        if (we) mem[int'(base) + i] = wdata[32*i +: 32];
+                        rdata[32*i +: 32] <= mem[int'(base) + i];
                     end
                 end else begin
                     wait_cycles <= wait_cycles - 1;

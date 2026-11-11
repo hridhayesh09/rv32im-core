@@ -1573,3 +1573,65 @@ earlier build even though its parameters had changed, so several configurations 
 (they were all really the 1 KB cache build). Now every build starts from an empty Quartus database,
 and the script checks in the synthesis report that the branch predictor got the requested
 `BHT_BITS`.
+
+## Stage 6: the core as a chip layout (Sky130, OpenLane 2)
+
+Full results and how to run it: [asic.md](asic.md).
+
+### What happens in an ASIC flow
+On an FPGA, the logic goes into lookup tables and wires that already exist on the chip. For an
+ASIC, the flow builds the chip itself out of a library of standard cells (gates, flip-flops), each
+a small fixed drawing of transistors:
+1. **Synthesis** (Yosys): RTL to a netlist of Sky130 cells.
+2. **Floorplan**: die size, where the pins go, the power grid (metal 4 and 5 stripes).
+3. **Placement**: every cell gets a spot in a row.
+4. **Clock tree synthesis**: buffers so the clock reaches every flip-flop at nearly the same time
+   (the leftover difference is the clock skew, 0.44 to 0.79 ns here).
+5. **Routing**: real metal wires between pins on 5 metal layers. The router started with 33,055
+   conflicts and needed 7 passes to reach 0.
+6. **Sign-off checks**: DRC (does the drawing follow the fab's geometric rules: widths, spacings),
+   LVS (does the drawing contain exactly the netlist's transistors and connections), STA (static
+   timing at several corners), antenna check.
+
+### What went in
+`rtl/rv32im_asic.sv`: the core, the branch predictor, 256-byte instruction and data caches, and the
+arbiter, with one 16-byte line port out. The caches' RAMs are flip-flops here (`ASIC` defined);
+real chips would use SRAM macros, which is why the caches are kept small. Result: 95,916 cell
+instances in 1.82 mm².
+
+### Corners
+The same circuit is slower when hot, at low voltage, or on a "slow" wafer, so timing is checked at
+corners. Here: typical (25 °C, 1.8 V) 68.9 MHz, fast (-40 °C, 1.95 V) 105.7 MHz, slow (100 °C,
+1.6 V) 36.0 MHz. A chip is specified at its slowest corner, so as it stands this one is a 35 MHz
+part; reaching 50 MHz there needs the slow paths shortened (or pipelining).
+
+### Gate-level simulation
+The final netlist (after placement, clock tree and buffering) was simulated with the PDK's cell
+models in Icarus Verilog, running all 50 riscv-tests in lockstep with Spike: 24,360 instructions,
+all matching. That checks that nothing the flow did (synthesis optimizations, inserted buffers,
+the clock tree) changed what the CPU computes.
+
+### Interview questions
+
+**What's the difference between DRC and LVS?**
+DRC checks the drawing against the fab's geometric rules (minimum widths, spacings, enclosures),
+without knowing what the circuit is. LVS extracts the circuit from the drawing and compares it with
+the netlist: same devices, same connections. A layout can pass DRC and still be the wrong circuit,
+or be the right circuit and break a spacing rule.
+
+**Your design passes at the typical corner and fails at the slow one. Is it done?**
+No: a chip's specified frequency is what it meets at the worst corner it must work in. Options:
+lower the clock (36 MHz), shorten the critical paths (retime, split logic across stages), or use
+faster cells. I report both numbers instead of only the typical one.
+
+**What are antenna violations?**
+During manufacturing, a long metal wire collects charge before the upper layers connect it to a
+driver; if only a transistor gate is attached, the charge can damage the thin gate oxide. Fixes:
+add a diode to drain the charge, or break the wire with a jump to a higher layer. Here 153 nets are
+flagged; OpenLane can insert the diodes.
+
+**Why convert SystemVerilog with sv2v instead of feeding it to the tools directly?**
+Open-source synthesis (Yosys) reads only part of SystemVerilog, and its SystemVerilog plugin
+(Synlig) crashed on this design with an internal assertion. sv2v rewrites the design into plain
+Verilog. Even then Yosys rejected one construct (a two-dimensional unpacked array), which became a
+packed array in the RTL. The gate-level simulation confirms the result still behaves the same.

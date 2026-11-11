@@ -55,11 +55,11 @@ module bpred #(
     localparam logic [RAS_W:0]   RAS_FULL = RAS_N32[RAS_W:0];     // entry count when full
 
     // ---- tables
-    logic               btb_valid  [BTB_N];
+    logic [BTB_N-1:0]   btb_valid;            // packed vectors: reset in one assignment
     logic [TAG_W-1:0]   btb_tag    [BTB_N];
     logic [29:0]        btb_target [BTB_N];
     logic [1:0]         btb_kind   [BTB_N];
-    logic [1:0]         bht        [BHT_N];
+    logic [2*BHT_N-1:0] bht;                  //   counter i is bht[2*i +: 2]
 
     // ---- speculative (s_) and committed (c_) global history and return stack
     logic [BHT_BITS-1:0] s_ghr, c_ghr, c_ghr_n;
@@ -85,7 +85,7 @@ module bpred #(
     assign kind = btb_kind[bi];
 
     assign pred_idx    = (MODE == 2) ? (pc[2 +: BHT_BITS] ^ s_ghr) : pc[2 +: BHT_BITS];
-    assign pred_ctr    = bht[pred_idx];
+    assign pred_ctr    = bht[2*pred_idx +: 2];
     assign pred_branch = hit && kind == K_BRANCH;
     assign pred_taken  = hit && (kind != K_BRANCH || pred_ctr[1]);
     assign pred_target = {(kind == K_RET && RAS_DEPTH > 0 && s_cnt != '0) ? s_ras[s_top]
@@ -148,8 +148,8 @@ module bpred #(
 
     always_ff @(posedge clk) begin
         if (rst) begin
-            for (int i = 0; i < BTB_N; i++) btb_valid[i] <= 1'b0;
-            for (int i = 0; i < BHT_N; i++) bht[i] <= 2'b01;    // weakly not taken
+            btb_valid <= '0;
+            bht       <= {BHT_N{2'b01}};           // weakly not taken
         end else if (upd_valid) begin
             if (!upd_cf) begin
                 btb_valid[ui] <= 1'b0;            // a stale entry predicted a non-branch taken
@@ -160,9 +160,9 @@ module bpred #(
                 btb_kind[ui]   <= upd_kind;
             end
             if (upd_cf && upd_kind == K_BRANCH) begin
-                if (upd_taken && upd_ctr != 2'b11)       bht[upd_idx] <= upd_ctr + 2'd1;
-                else if (!upd_taken && upd_ctr != 2'b00) bht[upd_idx] <= upd_ctr - 2'd1;
-                else                                     bht[upd_idx] <= upd_ctr;
+                if (upd_taken && upd_ctr != 2'b11)       bht[2*upd_idx +: 2] <= upd_ctr + 2'd1;
+                else if (!upd_taken && upd_ctr != 2'b00) bht[2*upd_idx +: 2] <= upd_ctr - 2'd1;
+                else                                     bht[2*upd_idx +: 2] <= upd_ctr;
             end
         end
     end

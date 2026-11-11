@@ -65,19 +65,21 @@ module cache #(
     // ---------------------------------------------------------------- storage
     // Valid, dirty and LRU bits are flip-flops (a flush clears them at once); tags and data are
     // block RAM: per way, a tag RAM and 4 data lanes (word i of every line in lane i).
-    logic [LINES-1:0] valid [WAYS];
-    logic [LINES-1:0] dirty [WAYS];
+    logic [WAYS-1:0][LINES-1:0] valid;
+    logic [WAYS-1:0][LINES-1:0] dirty;
     logic [LINES-1:0] lru;                          // 2-way: the way to replace next
 
     logic [IB-1:0]   rd_index, wr_index;
     logic            rd_en;
     logic [WAYS-1:0] tag_we;
-    logic [3:0]      lane_we [WAYS][4];
-    logic [31:0]     lane_wdata [4];
+    // Packed arrays (indexed the same way as unpacked ones): the ASIC flow's Yosys reads
+    // multi-dimensional unpacked arrays badly.
+    logic [WAYS-1:0][3:0][3:0]  lane_we;
+    logic [3:0][31:0]           lane_wdata;
     logic [TB-1:0]   tag_wdata;
-    logic [TW-1:0]   tag_raw [WAYS];
-    logic [TB-1:0]   tag_out [WAYS];
-    logic [31:0]     data_out [WAYS][4];
+    logic [WAYS-1:0][TW-1:0]    tag_raw;
+    logic [WAYS-1:0][TB-1:0]    tag_out;
+    logic [WAYS-1:0][3:0][31:0] data_out;
 
     genvar w, l;
     generate
@@ -220,10 +222,8 @@ module cache #(
             fwd_valid     <= 1'b0;
             flush_pending <= 1'b0;
             mem_req       <= 1'b0;
-            for (int i = 0; i < WAYS; i++) begin
-                valid[i] <= '0;
-                dirty[i] <= '0;
-            end
+            valid <= '0;
+            dirty <= '0;
             lru <= '0;
         end else begin
             if (rd_en) fwd_valid <= 1'b0;
@@ -260,7 +260,7 @@ module cache #(
                             flush_way   <= 1'b0;
                             state       <= S_FLUSH_READ;
                         end else begin
-                            for (int i = 0; i < WAYS; i++) valid[i] <= '0;
+                            valid <= '0;
                             if (pend) state <= S_REPLAY;
                         end
                     end else begin
