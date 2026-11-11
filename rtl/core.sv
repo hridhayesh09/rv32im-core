@@ -4,9 +4,10 @@
 //   instruction memory and the instruction arrives in ID. EX sends a load or store to the data
 //   memory (the address straight from the ALU); the data arrives in MEM, where it's aligned and
 //   registered, so WB only ever forwards registered values.
-// - Branches and jumps are resolved in EX. The core always fetches PC+4 next ("predict not
-//   taken"); when EX finds a taken branch or a jump, the two younger instructions in IF and ID
-//   are flushed and fetch restarts at the target.
+// - Branches and jumps are resolved in EX. IF asks the branch predictor (bpred.sv) where to
+//   fetch next; the guess travels down with the instruction, and when EX finds it was wrong,
+//   the two younger instructions in IF and ID are flushed and fetch restarts at the right PC.
+//   With BP_MODE = 0 the core always fetches PC+4 ("predict not taken").
 // - Multiply and divide run in a multi-cycle unit; EX holds the instruction until it's done.
 // - Every pipeline register has a valid bit. A flushed or empty slot is a bubble: valid = 0,
 //   and nothing downstream acts on it.
@@ -20,7 +21,11 @@
 module core
     import rv_pkg::*;
 #(
-    parameter logic [31:0] RESET_PC = 32'h8000_0000
+    parameter logic [31:0] RESET_PC = 32'h8000_0000,
+    parameter int BP_MODE   = 2,   // branch predictor: 0 none, 1 BTB + bimodal, 2 BTB + gshare
+    parameter int BTB_BITS  = 5,   // 32-entry BTB
+    parameter int BHT_BITS  = 8,   // 256 2-bit counters, 8 bits of global history
+    parameter int RAS_DEPTH = 4    // return-address stack entries (0: none)
 ) (
     input  logic        clk,
     input  logic        rst,
@@ -57,6 +62,11 @@ module core
     typedef struct packed {
         logic        valid;
         logic [31:0] pc;
+        logic        pred_taken;  // the branch predictor's guess, checked in EX
+        logic [31:0] pred_target;
+        logic        pred_branch;
+        logic [BHT_BITS-1:0] pred_idx;
+        logic [1:0]  pred_ctr;
     } if_id_t;
 
     typedef struct packed {
@@ -87,6 +97,11 @@ module core
         logic        ecall;
         logic        ebreak;
         logic        illegal;
+        logic        pred_taken;  // the branch predictor's guess, checked in EX
+        logic [31:0] pred_target;
+        logic        pred_branch;
+        logic [BHT_BITS-1:0] pred_idx;
+        logic [1:0]  pred_ctr;
     } id_ex_t;
 
     typedef struct packed {
@@ -121,7 +136,7 @@ module core
     mem_wb_t w;   // instruction in WB
 
     // Hazard control (set below).
-    logic        redirect;      // EX: taken branch or jump
+    logic        redirect;      // EX: mispredicted branch or jump, exception, MRET, FENCE.I
     logic [31:0] redirect_pc;
     logic        stall_f, stall_d, stall_e, flush_d, flush_e, load_use;
     logic        freeze;        // everything holds: waiting for memory (a data access in MEM,
@@ -131,13 +146,43 @@ module core
     // ---------------------------------------------------------------- IF
 
     logic [31:0] pc_f;
+    logic        pred_taken_f, pred_branch_f;
+    logic [31:0] pred_target_f;
+    logic [BHT_BITS-1:0] pred_idx_f;
+    logic [1:0]  pred_ctr_f;
 
     always_ff @(posedge clk) begin
         if (rst)           pc_f <= RESET_PC;
         else if (freeze)   ;  // hold
         else if (redirect) pc_f <= redirect_pc;
-        else if (!stall_f) pc_f <= pc_f + 32'd4;
+        else if (!stall_f) pc_f <= pred_taken_f ? pred_target_f : pc_f + 32'd4;
     end
+
+    // Set in EX (below): the instruction leaving EX, for the predictor's tables.
+    logic        bp_upd_valid, bp_upd_cf, bp_upd_taken, bp_upd_branch;
+    logic [1:0]  bp_upd_kind;
+    logic [31:0] bp_upd_target;
+
+    bpred #(.MODE(BP_MODE), .BTB_BITS(BTB_BITS), .BHT_BITS(BHT_BITS), .RAS_DEPTH(RAS_DEPTH)) u_bpred (
+        .clk, .rst,
+        .pc          (pc_f),
+        .advance     (!freeze && !stall_f && !redirect),
+        .pred_taken  (pred_taken_f),
+        .pred_target (pred_target_f),
+        .pred_branch (pred_branch_f),
+        .pred_idx    (pred_idx_f),
+        .pred_ctr    (pred_ctr_f),
+        .upd_valid   (bp_upd_valid),
+        .upd_pc      (e.pc),
+        .upd_kind    (bp_upd_kind),
+        .upd_cf      (bp_upd_cf),
+        .upd_taken   (bp_upd_taken),
+        .upd_target  (bp_upd_target),
+        .upd_branch  (bp_upd_branch),
+        .upd_idx     (e.pred_idx),
+        .upd_ctr     (e.pred_ctr),
+        .recover     (redirect && !freeze)
+    );
 
     // The instruction memory's output register doubles as the IF/ID instruction register,
     // so it is frozen (en = 0) whenever ID is stalled.
@@ -149,7 +194,9 @@ module core
         if (rst)            d.valid <= 1'b0;
         else if (freeze)    ;  // hold
         else if (flush_d)   d.valid <= 1'b0;
-        else if (!stall_d)  d       <= '{valid: 1'b1, pc: pc_f};
+        else if (!stall_d)  d       <= '{valid: 1'b1, pc: pc_f, pred_taken: pred_taken_f,
+                                         pred_target: pred_target_f, pred_branch: pred_branch_f,
+                                         pred_idx: pred_idx_f, pred_ctr: pred_ctr_f};
     end
 
     // ---------------------------------------------------------------- ID
@@ -248,7 +295,12 @@ module core
                 mret:      mret_d,
                 ecall:     ecall_d,
                 ebreak:    ebreak_d,
-                illegal:   illegal_d
+                illegal:   illegal_d,
+                pred_taken:  d.pred_taken,
+                pred_target: d.pred_target,
+                pred_branch: d.pred_branch,
+                pred_idx:    d.pred_idx,
+                pred_ctr:    d.pred_ctr
             };
         end
     end
@@ -318,6 +370,31 @@ module core
     assign target_e = ((e.jalr ? rs1_e : e.pc) + e.imm) & {31'h7fff_ffff, !e.jalr};  // JALR clears bit 0
     assign jump_e   = e.jal || e.jalr || (e.branch && branch_taken(e.funct3, rs1_e, rs2_e));
 
+    // The fetch after this instruction went to the wrong place: the guess was taken/not taken
+    // the wrong way, or the taken target was wrong (e.g. a JALR to a new address).
+    //
+    // "target == guess" is checked without waiting for the target adder's carry chain:
+    // a + b == c exactly when the carry into each bit implied by c (a ^ b ^ c) matches the carry
+    // out of the bit below, assuming that bit's sum was right ((a & b) | ((a | b) & ~c)).
+    // Only bits 31:2 are compared (the guess's low bits are taken from a 2-bit add): a target
+    // with bit 1 set traps (misaligned), so it is redirected anyway; JALR's cleared bit 0 is
+    // below that too.
+    function automatic logic sum_equals(input logic [31:0] a, b, c);
+        logic [31:0] carry_out;
+        carry_out = (a & b) | ((a | b) & ~c);
+        return (a ^ b ^ c) == {carry_out[30:0], 1'b0};
+    endfunction
+
+    logic [31:0] target_base;
+    logic [1:0]  target_low;
+    logic        target_ok;
+    assign target_base = e.jalr ? rs1_e : e.pc;
+    assign target_low  = target_base[1:0] + e.imm[1:0];
+    assign target_ok   = sum_equals(target_base, e.imm, {e.pred_target[31:2], target_low});
+
+    logic mispredict;
+    assign mispredict = (e.pred_taken != jump_e) || (jump_e && !target_ok);
+
     // ---- exceptions, CSRs, MRET
     // The instruction in EX executes (and moves on) this cycle unless the pipeline is frozen or a
     // multiply/divide is still running.
@@ -372,15 +449,33 @@ module core
                         freeze,                                  // 7: memory wait cycles
                         stall_e && !freeze,                      // 6: mul/div wait cycles
                         load_use && !freeze,                     // 5: load-use stall cycles
-                        ex_fire && !exception && jump_e,         // 4: mispredicts
+                        ex_fire && !exception && mispredict,     // 4: mispredicts
                         ex_fire && !exception && (e.branch || e.jal || e.jalr)})  // 3: branches
     );
 
     // FENCE.I redirects to the next instruction: the 2 younger instructions, fetched before an
     // older store to code finished, are flushed and fetched again.
-    assign redirect    = e.valid && (exception || e.mret || jump_e || e.fence_i);
+    // (Not while a multiply/divide is still running: it stays in EX, so it isn't flushed.)
+    assign redirect    = e.valid && !stall_e && (exception || e.mret || e.fence_i || mispredict);
     assign cache_flush = ex_fire && e.fence_i && !exception;
-    assign redirect_pc = exception ? mtvec : e.mret ? mepc : e.fence_i ? e.pc + 32'd4 : target_e;
+    assign redirect_pc = exception ? mtvec : e.mret ? mepc :
+                         (jump_e && !e.fence_i) ? target_e : e.pc + 32'd4;
+
+    // Predictor update. Calls and returns follow the RISC-V convention: a jump that links into
+    // ra or t0 (x1/x5) is a call; a JALR from ra/t0 that doesn't link is a return.
+    function automatic logic is_link(input logic [4:0] r);
+        return r == 5'd1 || r == 5'd5;
+    endfunction
+
+    assign bp_upd_valid  = ex_fire && !exception && (bp_upd_cf || e.pred_taken);
+    assign bp_upd_cf     = e.branch || e.jal || e.jalr;
+    assign bp_upd_taken  = jump_e;
+    assign bp_upd_target = target_e;
+    assign bp_upd_branch = e.pred_branch;
+    assign bp_upd_kind   = e.branch                                ? 2'd0 :   // branch
+                           ((e.jal || e.jalr) && is_link(e.rd))    ? 2'd2 :   // call
+                           (e.jalr && is_link(e.rs1))              ? 2'd3 :   // return
+                                                                     2'd1;    // other jump
 
     // ---- data memory request (sent from EX; the data comes back while the instruction is in MEM)
     // Stores: line the data up with the addressed byte lanes. Byte stores repeat the byte in

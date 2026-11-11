@@ -60,9 +60,13 @@ async def hello(dut):
 async def perf(dut):
     """Performance counters on kernels with exactly known event counts (sw/soc/perf_test.c)."""
     text = await run_until_done(dut, 1_000_000)
-    # 100 branches, 99 taken (all mispredicted: the core predicts not taken). Instructions from the
-    # first minstret read up to the second: the read itself, li, 200 in the loop, 2 counter reads.
-    assert "loop: branches 100 mispredicts 99 instret 204\r\n" in text
+    # 100 branches, 99 taken. With the default gshare predictor: the first is a BTB miss, then each
+    # new value of the 8-bit global history finds a fresh (weakly not taken) counter until the
+    # history is all "taken" (up to 9 misses; fewer if the history before the loop already ended
+    # in taken branches), and the loop exit is the last miss. Measured: 10 (99 with no predictor).
+    # Instructions from the first minstret read up to the second: the read itself, li, 200 in the
+    # loop, 2 counter reads.
+    assert "loop: branches 100 mispredicts 10 instret 204\r\n" in text
     assert "load-use: 50\r\n" in text
     assert "divide wait: 330\r\n" in text        # 33 cycles per divide
     assert "multiply wait: 20\r\n" in text       # 2 cycles per multiply

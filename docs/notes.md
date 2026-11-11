@@ -1259,3 +1259,107 @@ Not visible to software: the same instructions retire with the same results (loc
 checks every one). The interface to memory is the same request/response handshake, one stage earlier.
 The address now comes straight from the ALU, which is a new path (ALU to RAM address), but it is much
 shorter than the old one.
+
+## Stage 5, step 6: branch prediction (`rtl/bpred.sv`)
+
+### Why predict
+Branches are only resolved in EX, two stages after fetch. Before this step the core always fetched
+the next instruction in order ("predict not taken"), so every taken branch, jump, call and return
+threw away the two instructions behind it: 2 lost cycles each. Loops end in a taken branch every
+iteration, so this adds up.
+
+### The three pieces
+- **BTB (branch target buffer), 32 entries.** A small table indexed by the PC being fetched. When a
+  branch or jump is taken, EX writes its PC, its target and its kind (conditional branch, jump,
+  call, return) into the table. In IF, a hit tells the core "this PC is a branch, and last time it
+  went there", before the instruction has even arrived from memory.
+- **Direction counters (bimodal or gshare), 256 x 2 bits.** For a conditional branch, a 2-bit
+  saturating counter decides taken (2, 3) or not taken (0, 1); each outcome moves it one step. Two
+  wrong guesses in a row are needed to flip a strong prediction, so a loop exit doesn't untrain the
+  loop branch. *Bimodal* picks the counter with the PC. *Gshare* XORs the PC with the global history
+  (taken/not taken of the last 8 branches), so the same branch can have different predictions
+  depending on the path that led to it (a pattern like taken, taken, not taken).
+- **RAS (return-address stack), 4 entries.** A function can return to many places, so the BTB's
+  "last target" is often wrong for returns. A call pushes PC+4, a return pops it. Calls and returns
+  are recognised by the RISC-V convention: a jump that links into ra/t0 is a call; `jalr` from
+  ra/t0 that doesn't link is a return.
+
+### Guessing safely
+The guess (taken? where to?) travels down the pipeline with the instruction. EX computes the real
+answer and compares. If the guess was wrong, IF and ID are flushed and fetch restarts at the right
+PC, exactly like a taken branch used to. So a bad prediction only costs cycles; it can never change
+what the program computes. Lockstep with Spike checks this on every retired instruction.
+
+History and stack are updated speculatively in IF, because the next branch is fetched before the
+previous one reaches EX. A wrong-path instruction could therefore mess them up. So there is a second,
+"committed" copy updated in EX, and on every redirect the speculative copy is restored from it.
+
+Two corner cases found while writing the tests:
+- **Stale BTB entries.** Code can be rewritten (FENCE.I). A PC the BTB remembers as a jump may now
+  hold a divide. EX sees "predicted taken, but this isn't a branch", fetches PC+4, and clears the
+  entry. The redirect must wait until the divide finishes; flushing it while it runs would lose it.
+  A planted bug that skipped that wait was caught by 3 runs of the new directed test.
+- **Watchdog.** A FENCE.I that writes back a whole dirty data cache to slow memory takes longer
+  than the old 100-cycle "nothing retired" limit in the lockstep test, which fired on the new test.
+  It wasn't a hang (the trace showed the flush walking the cache), so the limit is now 2000.
+
+### Timing
+The first version checked "was the target right?" by comparing the 32-bit target from the EX adder
+with the guess. That put a compare after the adder after the forwarding mux, and the CPU-only build
+just made it: 50.75 MHz. The check now uses a carry-free trick: a + b == c exactly when, for every
+bit, the carry implied by c (a ^ b ^ c) equals the carry the bit below would produce if its sum were
+right ((a & b) | ((a | b) & ~c)). That's one layer of logic instead of a 32-bit carry chain (checked
+against a Python model on a million random cases, and the planted "ignore wrong targets" bug is
+caught by 5 runs).
+
+### Results
+Simulation (`python tools/bp_sweep.py`, 1-cycle memory), CPI:
+
+| Program | none | bimodal | gshare | gshare + RAS |
+|---|---|---|---|---|
+| fib | 1.152 | 1.063 | 1.043 | 1.042 |
+| sort | 1.298 | 1.143 | 1.160 | 1.153 |
+| primes | 6.977 | 6.620 | 6.560 | 6.560 |
+
+`perf_test` loop of 100 branches (99 taken): 99 mispredicts with no predictor, 10 with gshare.
+`sort` is the one case where gshare is slightly worse than bimodal; a likely reason (not measured)
+is that its data-dependent compares spread over more counters. The RAS barely matters here because these
+programs make few calls; CoreMark will say more.
+
+Quartus (slow 85C model):
+
+| Build | LEs | M9K | Fmax |
+|---|---|---|---|
+| CPU-only + 4 KB caches, no predictor | 11,961 | 120 | 55.63 MHz |
+| same + predictor, first version | 13,673 | 122 | 50.75 MHz |
+| same + predictor, carry-free target check | 13,695 | 122 | 51.03 MHz |
+| full SoC with NPU (no caches) + predictor | 35,774 | 167 | 56.17 MHz |
+
+The predictor costs about 1,700 LEs and 2 M9K (Quartus put the BTB in block RAM). The board's clock
+is fixed at 50 MHz, so Fmax above 50 doesn't make it faster, while fewer cycles do.
+
+### Interview questions
+
+**Why does a 2-bit counter beat a 1-bit "last outcome" predictor on loops?**
+A 1-bit predictor mispredicts twice per loop: at the exit, and again on the first iteration next
+time (it remembered "not taken"). A 2-bit counter needs two wrong outcomes to change its mind, so
+only the exit mispredicts.
+
+**What is gshare and what does it buy you?**
+The counter index is PC XOR recent global branch history. Branches whose outcome depends on the
+path (correlated branches, short repeating patterns) get separate counters per path. The cost is
+aliasing (more branches share the table) and a warm-up period while the history fills.
+
+**Why a return-address stack when you already have a BTB?**
+The BTB remembers one target per PC. A function called from many places returns to a different
+place each time; the stack gives the right one as long as calls nest less deeply than its size.
+
+**How do you recover predictor state after a mispredict?**
+Keep a committed copy of the global history and return stack, updated only when instructions
+leave EX (in order, non-speculatively), and copy it over the speculative state on every redirect.
+
+**How do you make sure the predictor can't break correctness?**
+Every prediction is checked in EX against the real outcome and target, and the wrong path is
+flushed. Then I tested it like that's the only guarantee: lockstep with Spike on every program
+with no predictor, tiny aliasing tables, and the default, a directed test with stale entries and
+deep recursion, and planted bugs to prove the tests fail when the checking is wrong.

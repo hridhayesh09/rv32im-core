@@ -16,7 +16,7 @@ C_FLAGS = ["-O2", "-ffreestanding", "-fno-builtin", "-Wall", "-Werror"]
 UART_DIVISOR = 8   # clock cycles per bit in simulation (the board uses 434 for 115200 baud)
 
 RTL_SOURCES = ["rv_pkg.sv", "alu.sv", "regfile.sv", "decoder.sv", "muldiv.sv", "csr.sv", "dpram.sv",
-               "core.sv", "wb_uart.sv", "wb_timer.sv", "wb_gpio.sv", "fb_ram.sv", "wb_vga.sv",
+               "bpred.sv", "core.sv", "wb_uart.sv", "wb_timer.sv", "wb_gpio.sv", "fb_ram.sv", "wb_vga.sv",
                "sdram_ctrl.sv", "cache_ram.sv", "cache.sv", "mem_arbiter.sv", "npu/lint.vlt", "npu/pe.v", "npu/systolic_array.v", "npu/sdp_ram.sv",
                "npu/wb_npu.sv", "soc.sv"]
 TB_SOURCES = ["sdram_model.sv", "vga_capture.sv", "tb_soc.sv"]

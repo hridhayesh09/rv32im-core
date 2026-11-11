@@ -195,8 +195,8 @@ module soc #(
                         (fetch_target_q == TARGET_CACHE) ? icache_rdata : rom_a_rdata;
 
     // ---------------------------------------------------------------- Wishbone bridge
-    // A bus access is captured when the core sends it (instruction leaving MEM) and driven on
-    // the bus while that instruction waits in WB; the core is frozen until the access is done.
+    // A bus access is captured when the core sends it (instruction leaving EX) and driven on
+    // the bus while that instruction waits in MEM; the core is frozen until the access is done.
     // The slave's read data and ack are registered here before the core sees them, so no path
     // runs from inside a peripheral into the core in one cycle (one extra cycle per bus access).
 

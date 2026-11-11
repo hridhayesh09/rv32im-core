@@ -12,7 +12,7 @@ from programs import ROOT, build, spike_trace
 
 HERE = Path(__file__).resolve().parent
 RTL_SOURCES = ["rv_pkg.sv", "alu.sv", "regfile.sv", "decoder.sv", "muldiv.sv", "csr.sv", "dpram.sv",
-               "core.sv"]
+               "bpred.sv", "core.sv"]
 CACHE_SOURCES = ["cache_ram.sv", "cache.sv", "mem_arbiter.sv"]
 
 # Cache configurations the lockstep tests also run through (tb/tb_cached.sv). Tiny caches, so
@@ -22,18 +22,29 @@ CACHE_CONFIGS = {
     "2way256": dict(ICACHE_SIZE=256, ICACHE_WAYS=2, DCACHE_SIZE=256, DCACHE_WAYS=2),
 }
 
+# Branch predictor configurations the lockstep tests also run with (tb/tb_top.sv): none, and
+# tiny tables (4-entry BTB, 16 counters, 2-entry return stack) so entries alias and get replaced
+# all the time. The other testbenches use the core's default predictor.
+BP_CONFIGS = {
+    "nobp":    dict(BP_MODE=0),
+    "bimodal": dict(BP_MODE=1, BTB_BITS=2, BHT_BITS=4, RAS_DEPTH=2),
+    "gshare":  dict(BP_MODE=2, BTB_BITS=2, BHT_BITS=4, RAS_DEPTH=2),
+}
+
 _runners = {}
 
 
 def get_core_runner(config=None):
-    """The plain testbench (tb_top) for config=None, else tb_cached with that cache config."""
+    """The plain testbench (tb_top) for config=None or a BP_CONFIGS name, else tb_cached with that
+    cache config."""
     if config not in _runners:
         from cocotb_tools.runner import get_runner
         runner = get_runner("verilator")
-        if config is None:
+        if config is None or config in BP_CONFIGS:
             sources = [ROOT / "rtl" / f for f in RTL_SOURCES] + [ROOT / "tb" / "tb_top.sv"]
-            runner.build(sources=sources, hdl_toplevel="tb_top", build_dir=ROOT / "build" / "tb_top",
-                         build_args=["-Wall"], always=True)
+            runner.build(sources=sources, hdl_toplevel="tb_top",
+                         build_dir=ROOT / "build" / ("tb_top" + (f"_{config}" if config else "")),
+                         parameters=BP_CONFIGS.get(config, {}), build_args=["-Wall"], always=True)
         else:
             sources = ([ROOT / "rtl" / f for f in RTL_SOURCES + CACHE_SOURCES] +
                        [ROOT / "tb" / "line_mem.sv", ROOT / "tb" / "tb_cached.sv"])
@@ -53,7 +64,7 @@ def lockstep(src, includes, name=None, plusargs=(), config=None, **build_options
     tag = f"-{config}" if config else ""
     log = elf.with_name(elf.stem + tag + ".log")
     get_core_runner(config).test(
-        hdl_toplevel="tb_cached" if config else "tb_top",
+        hdl_toplevel="tb_cached" if config in CACHE_CONFIGS else "tb_top",
         test_module="lockstep",
         test_dir=HERE,
         plusargs=[f"+program={hexfile}", *plusargs],

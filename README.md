@@ -14,7 +14,7 @@ SystemVerilog, grown into a system-on-chip on the Terasic DE10-Lite (Intel MAX 1
 | 2 | SoC: Wishbone bus, boot ROM, SDRAM, UART, timer, GPIO, UART bootloader | **runs on the DE10-Lite**: bootloader, hello, 64 MB SDRAM test ([board log](docs/results/board_2026-11-07.md)) |
 | 3 | VGA framebuffer, graphics driver, a playable game | **runs on the DE10-Lite**: Snake playable on a real VGA monitor with the board's buttons |
 | 4 | Systolic array accelerator, MNIST software vs accelerator | **runs on the DE10-Lite**: 16x16 NPU, MNIST bit-exact, 38.49x faster than software |
-| 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | planned |
+| 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | caches and predictor done, CoreMark next |
 | stretch | Doom; OpenLane on Sky130 | planned |
 
 The full plan for each stage is in [docs/roadmap.md](docs/roadmap.md).
@@ -60,7 +60,9 @@ flowchart LR
 - **5 stages**, in order: IF → ID → EX → MEM → WB, with synchronous-read memories (FPGA block RAM style).
 - **Forwarding** from MEM and WB into EX, plus write-before-read in the register file.
 - **Load-use stall:** one bubble when an instruction uses a load result right away.
-- **Branches and jumps** resolve in EX; predict not-taken; a taken branch flushes 2 instructions.
+- **Branch prediction** in IF: a 32-entry BTB, gshare (256 2-bit counters, 8 bits of history) and a
+  4-entry return-address stack. Branches resolve in EX; a mispredict flushes 2 instructions.
+- **Caches** (when running from SDRAM): 4 KB instruction and data caches, write-back, direct-mapped or 2-way.
 - **Multiply/divide unit:** 2 extra cycles per multiply, 33 per divide; EX stalls until done.
 - **Retire trace** (`rvfi_*`) used to compare every instruction against Spike.
 
@@ -75,22 +77,23 @@ All numbers come from `make test` (Verilator 5.036, Spike, GCC 13.2.0) unless no
 | Unit tests: ALU, register file, decoder, mul/div unit against Python models | pass |
 | Official riscv-tests rv32ui, in lockstep with Spike | **42 / 42** pass (misaligned accesses trap and are emulated by a handler, [how](docs/notes.md#stage-5-step-1-exceptions-and-csrs)) |
 | Official riscv-tests rv32um, in lockstep with Spike | **8 / 8** pass (2,181 instructions compared) |
-| Directed programs (forwarding, load-use, flush, mul/div, FENCE.I, traps and CSRs) in lockstep | 8 / 8 pass |
+| Directed programs (forwarding, load-use, flush, mul/div, FENCE.I, traps and CSRs, branch prediction) in lockstep | 9 / 9 pass |
 | Random RV32IM programs in lockstep (20 per CI run) | pass; a local 300-program run (`RANDOM_PROGRAMS=300 make test`) compared 140,887 instructions with 0 mismatches |
 | C programs (GCC -O2) in lockstep | 3 / 3 pass |
 | All of the above again with random wait states on every data access | pass |
+| All of the above again through tiny caches (direct-mapped and 2-way), and with no / tiny bimodal / tiny gshare predictors | pass |
 
 **Performance in simulation** (cycles from reset until the program reports its result)
 
-| Program | Instructions | Cycles | CPI |
-|---|---|---|---|
-| fib (recursive + iterative Fibonacci) | 176,516 | 203,389 | 1.152 |
-| sort (quicksort of 256 numbers) | 29,513 | 38,312 | 1.298 |
-| primes (trial division up to 2000) | 72,250 | 504,092 | 6.977 |
+| Program | Instructions | CPI, no prediction | CPI, bimodal | CPI, gshare | CPI, gshare + RAS (default) |
+|---|---|---|---|---|---|
+| fib (recursive + iterative Fibonacci) | 176,516 | 1.152 | 1.063 | 1.043 | 1.042 |
+| sort (quicksort of 256 numbers) | 29,513 | 1.298 | 1.143 | 1.160 | 1.153 |
+| primes (trial division up to 2000) | 72,250 | 6.977 | 6.620 | 6.560 | 6.560 |
 
-The ideal CPI for this pipeline is 1. The extra cycles come from taken branches (2 cycles each),
-load-use stalls (1 cycle) and divides (33 cycles each), which is why `primes`, full of `%`, is
-the slowest.
+The ideal CPI for this pipeline is 1. The extra cycles come from mispredicted branches (2 cycles
+each), load-use stalls (1 cycle) and divides (33 cycles each), which is why `primes`, full of `%`,
+is the slowest. (`python tools/bp_sweep.py`; 1-cycle memory, simulation.)
 
 **MNIST on the board** (784 → 64 → 10, int8; [board log](docs/results/board_2026-11-07.md))
 
@@ -100,14 +103,15 @@ the slowest.
 | CPU + 16x16 NPU | 200 | 199 (99.5 %) | 22,263 | 445 us |
 
 **Speedup: 38.49x**, and every logit of every image is bit-exact with the NumPy int8 model.
+(Board run of 2026-11-07, before the caches and the branch predictor; not re-measured yet.)
 
 **FPGA build** (Quartus Prime Lite 25.1, DE10-Lite / 10M50, whole SoC: CPU, SDRAM, VGA, 16x16 NPU)
 
-A CPU-only build with 4 KB instruction and data caches (no NPU) uses 11,961 LEs and 120 / 182 M9K and reaches 55.63 MHz.
+A CPU-only build with 4 KB instruction and data caches (no NPU) uses 13,695 LEs and 122 / 182 M9K and reaches 51.03 MHz.
 
 | Logic elements | Memory bits | 9-bit multipliers | Fmax (slow, 85 °C) | Setup slack at 50 MHz |
 |---|---|---|---|---|
-| 34,022 (68 %) | 1,162,824 (69 %), 165 / 182 M9K | 136 (47 %) | 56.76 MHz | +2.381 ns |
+| 35,774 (72 %) | 1,164,584 (69 %), 167 / 182 M9K | 136 (47 %) | 56.17 MHz | +2.198 ns |
 
 **Snake on the CPU** (frame captured from the simulated VGA monitor; [how it's tested](docs/notes.md#stage-3-graphics))
 

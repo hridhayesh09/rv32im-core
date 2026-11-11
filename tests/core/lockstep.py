@@ -9,7 +9,8 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, ReadOnly, RisingEdge
 
-MAX_IDLE_CYCLES = 100   # no instruction retiring for this long means the core is stuck
+MAX_IDLE_CYCLES = 2000  # no instruction retiring for this long means the core is stuck (a FENCE.I
+                        # that writes back every line of a dirty cache to slow memory can take hundreds of cycles)
 
 
 def describe(e):

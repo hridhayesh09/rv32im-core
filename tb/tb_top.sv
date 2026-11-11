@@ -3,7 +3,13 @@
 //
 // +random_stalls makes data accesses take a random number of extra cycles (like a slow bus
 // device), to test the core's wait-state handling with every program.
-module tb_top (
+// The branch predictor configuration is a parameter (defaults: the core's).
+module tb_top #(
+    parameter int BP_MODE   = 2,
+    parameter int BTB_BITS  = 5,
+    parameter int BHT_BITS  = 8,
+    parameter int RAS_DEPTH = 4
+) (
     input  logic        clk,
     input  logic        rst,
     output logic        rvfi_valid,
@@ -28,7 +34,8 @@ module tb_top (
     logic [3:0]  dmem_we;
     logic [31:0] imem_addr, imem_rdata, dmem_addr, dmem_wdata, dmem_rdata;
 
-    core u_core (.*);
+    core #(.BP_MODE(BP_MODE), .BTB_BITS(BTB_BITS), .BHT_BITS(BHT_BITS), .RAS_DEPTH(RAS_DEPTH))
+        u_core (.*);
 
     dpram #(.INIT_PLUSARG("program")) u_ram (
         .clk     (clk),

@@ -9,8 +9,8 @@ int main(void)
 {
     uint32_t b0, m0, b1, m1, l0, l1, w0, w1, i0, i1;
 
-    // 100 loop iterations: 100 branches; taken 99 times, each one a mispredict (the core
-    // predicts not taken).
+    // 100 loop iterations: 100 branches, taken 99 times. Mispredicts depend on the predictor
+    // (tests/soc/test_soc.py explains the count).
     b0 = PERF_BRANCHES; m0 = PERF_MISPREDICTS; i0 = PERF_INSTRET;
     __asm__ volatile("li t0, 100\n1: addi t0, t0, -1\nbnez t0, 1b" ::: "t0");
     b1 = PERF_BRANCHES; m1 = PERF_MISPREDICTS; i1 = PERF_INSTRET;
@@ -33,7 +33,7 @@ int main(void)
     printf("multiply wait: %u\n", w1 - w0);
 
     // A bus access (the timer) waits for the bus: memory wait cycles go up. The two NOPs let the
-    // load reach WB (where it waits) before the counter is read.
+    // load finish waiting (in MEM) before the counter is read.
     w0 = PERF_MEM_WAIT;
     (void)TIMER_TIME_LO;
     __asm__ volatile("nop\nnop");

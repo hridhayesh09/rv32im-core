@@ -26,6 +26,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/decoder.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/muldiv.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/csr.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/dpram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/bpred.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_uart.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_timer.sv
