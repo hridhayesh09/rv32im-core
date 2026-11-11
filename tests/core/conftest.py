@@ -10,7 +10,7 @@ import pytest
 from programs import ROOT, build, spike_trace
 
 HERE = Path(__file__).resolve().parent
-RTL_SOURCES = ["rv_pkg.sv", "alu.sv", "regfile.sv", "decoder.sv", "muldiv.sv", "dpram.sv", "core.sv"]
+RTL_SOURCES = ["rv_pkg.sv", "alu.sv", "regfile.sv", "decoder.sv", "muldiv.sv", "csr.sv", "dpram.sv", "core.sv"]
 
 
 @pytest.fixture(scope="session")

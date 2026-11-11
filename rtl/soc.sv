@@ -58,7 +58,7 @@ module soc #(
         .clk, .rst,
         .imem_en, .imem_addr, .imem_rdata,
         .dmem_en, .dmem_we, .dmem_addr, .dmem_wdata, .dmem_rdata, .dmem_stall,
-        .rvfi_valid(), .rvfi_pc(), .rvfi_insn(), .rvfi_trap(), .rvfi_rd(), .rvfi_rd_wdata(),
+        .rvfi_valid(), .rvfi_pc(), .rvfi_insn(), .rvfi_rd(), .rvfi_rd_wdata(),
         .rvfi_mem_read(), .rvfi_mem_wmask(), .rvfi_mem_addr(), .rvfi_mem_wdata()
     );
     /* verilator lint_on PINCONNECTEMPTY */

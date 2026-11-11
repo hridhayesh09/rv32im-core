@@ -13,6 +13,9 @@
 //   them against Spike.
 // - Data accesses may take extra cycles (bus devices, SDRAM). While the instruction in WB is
 //   still waiting for its data (dmem_stall), the whole pipeline freezes.
+// - Exceptions (illegal instruction, ECALL, EBREAK, misaligned load/store/jump) are taken in EX:
+//   the instruction becomes a bubble, the younger ones are flushed, and fetch restarts at mtvec.
+//   Older instructions (in MEM and WB) finish normally, so exceptions are precise.
 module core
     import rv_pkg::*;
 #(
@@ -35,7 +38,6 @@ module core
     output logic        rvfi_valid,
     output logic [31:0] rvfi_pc,
     output logic [31:0] rvfi_insn,
-    output logic        rvfi_trap,      // illegal instruction, ECALL or EBREAK
     output logic [4:0]  rvfi_rd,        // 0 when nothing was written
     output logic [31:0] rvfi_rd_wdata,
     output logic        rvfi_mem_read,
@@ -74,7 +76,11 @@ module core
         logic        jalr;
         logic        is_muldiv;   // (not "muldiv": Quartus confuses it with the module name)
         logic        fence_i;
-        logic        trap;
+        logic        is_csr;
+        logic        mret;
+        logic        ecall;
+        logic        ebreak;
+        logic        illegal;
     } id_ex_t;
 
     typedef struct packed {
@@ -88,7 +94,6 @@ module core
         logic        reg_write;
         logic        mem_read;
         logic        mem_write;
-        logic        trap;
     } ex_mem_t;
 
     typedef struct packed {
@@ -100,7 +105,6 @@ module core
         logic [2:0]  funct3;
         logic        reg_write;
         logic        mem_read;
-        logic        trap;
         logic [3:0]  mem_wmask;
         logic [31:0] mem_wdata;
     } mem_wb_t;
@@ -153,7 +157,7 @@ module core
     src_b_t      src_b_d;
     wb_sel_t     wb_sel_d;
     logic        reg_write_d, mem_read_d, mem_write_d, branch_d, jal_d, jalr_d, muldiv_d, fence_i_d;
-    logic        uses_rs1_d, uses_rs2_d, ecall_d, ebreak_d, illegal_d;
+    logic        uses_rs1_d, uses_rs2_d, ecall_d, ebreak_d, mret_d, csr_d, illegal_d;
 
     decoder u_decoder (
         .instr     (instr_d),
@@ -178,6 +182,8 @@ module core
         .uses_rs2  (uses_rs2_d),
         .ecall     (ecall_d),
         .ebreak    (ebreak_d),
+        .mret      (mret_d),
+        .csr       (csr_d),
         .illegal   (illegal_d)
     );
 
@@ -230,7 +236,11 @@ module core
                 jalr:      jalr_d,
                 is_muldiv: muldiv_d,
                 fence_i:   fence_i_d,
-                trap:      illegal_d || ecall_d || ebreak_d
+                is_csr:    csr_d,
+                mret:      mret_d,
+                ecall:     ecall_d,
+                ebreak:    ebreak_d,
+                illegal:   illegal_d
             };
         end
     end
@@ -296,12 +306,66 @@ module core
     assign stall_e = e.valid && e.is_muldiv && !md_done;
 
     logic [31:0] target_e;
-    assign target_e    = ((e.jalr ? rs1_e : e.pc) + e.imm) & {31'h7fff_ffff, !e.jalr};  // JALR clears bit 0
+    logic        jump_e;
+    assign target_e = ((e.jalr ? rs1_e : e.pc) + e.imm) & {31'h7fff_ffff, !e.jalr};  // JALR clears bit 0
+    assign jump_e   = e.jal || e.jalr || (e.branch && branch_taken(e.funct3, rs1_e, rs2_e));
+
+    // ---- exceptions, CSRs, MRET
+    // The instruction in EX executes (and moves on) this cycle unless the pipeline is frozen or a
+    // multiply/divide is still running.
+    logic        ex_fire, csr_illegal, mem_misaligned, jump_misaligned, exception;
+    logic [31:0] csr_rdata, mtvec, mepc, cause, tval;
+    assign ex_fire = e.valid && !freeze && !stall_e;
+
+    // alu_y is the address for loads and stores.
+    assign mem_misaligned  = (e.mem_read || e.mem_write) &&
+                             ((e.funct3[1:0] == 2'b01 && alu_y[0]) ||
+                              (e.funct3[1:0] == 2'b10 && alu_y[1:0] != 2'b00));
+    assign jump_misaligned = jump_e && target_e[1];   // no compressed instructions: 4-byte aligned
+    assign exception = e.valid && (e.illegal || e.ecall || e.ebreak || (e.is_csr && csr_illegal) ||
+                                   mem_misaligned || jump_misaligned);
+
+    always_comb begin
+        if (e.illegal || (e.is_csr && csr_illegal)) begin
+            cause = 32'd2;  tval = e.instr;       // illegal instruction
+        end else if (e.ebreak) begin
+            cause = 32'd3;  tval = e.pc;          // breakpoint
+        end else if (e.ecall) begin
+            cause = 32'd11; tval = '0;            // environment call from M-mode
+        end else if (jump_misaligned) begin
+            cause = 32'd0;  tval = target_e;      // instruction address misaligned
+        end else if (e.mem_write) begin
+            cause = 32'd6;  tval = alu_y;         // store address misaligned
+        end else begin
+            cause = 32'd4;  tval = alu_y;         // load address misaligned
+        end
+    end
+
+    csr u_csr (
+        .clk, .rst,
+        .op_fire     (ex_fire && e.is_csr),
+        .op          (e.funct3),
+        .addr        (e.imm[11:0]),
+        .src         (e.funct3[2] ? {27'b0, e.rs1} : rs1_e),
+        .src_zero    (e.rs1 == 5'd0),
+        .rdata       (csr_rdata),
+        .illegal     (csr_illegal),
+        .trap        (ex_fire && exception),
+        .trap_pc     (e.pc),
+        .trap_cause  (cause),
+        .trap_tval   (tval),
+        .mret_fire   (ex_fire && e.mret),
+        .mtvec_out   (mtvec),
+        .mepc_out    (mepc),
+        .retire      (w.valid && !freeze),
+        .mem_pending (m.valid),
+        .wb_pending  (w.valid)
+    );
+
     // FENCE.I redirects to the next instruction: the 2 younger instructions, fetched before an
     // older store to code finished, are flushed and fetched again.
-    assign redirect    = e.valid && (e.jal || e.jalr || e.fence_i ||
-                                     (e.branch && branch_taken(e.funct3, rs1_e, rs2_e)));
-    assign redirect_pc = e.fence_i ? e.pc + 32'd4 : target_e;
+    assign redirect    = e.valid && (exception || e.mret || jump_e || e.fence_i);
+    assign redirect_pc = exception ? mtvec : e.mret ? mepc : e.fence_i ? e.pc + 32'd4 : target_e;
 
     always_ff @(posedge clk) begin
         if (rst) begin
@@ -312,17 +376,17 @@ module core
             m.valid <= 1'b0;   // bubble while EX is busy
         end else begin
             m <= '{
-                valid:      e.valid,
+                valid:      e.valid && !exception,   // a trapping instruction doesn't continue
                 pc:         e.pc,
                 instr:      e.instr,
-                result:     e.is_muldiv ? md_result : (e.wb_sel == WB_PC4) ? e.pc + 32'd4 : alu_y,
+                result:     e.is_muldiv ? md_result : e.is_csr ? csr_rdata :
+                            (e.wb_sel == WB_PC4) ? e.pc + 32'd4 : alu_y,
                 store_data: rs2_e,
                 rd:         e.rd,
                 funct3:     e.funct3,
                 reg_write:  e.reg_write,
                 mem_read:   e.mem_read,
-                mem_write:  e.mem_write,
-                trap:       e.trap
+                mem_write:  e.mem_write
             };
         end
     end
@@ -378,7 +442,6 @@ module core
                 funct3:    m.funct3,
                 reg_write: m.reg_write,
                 mem_read:  m.mem_read,
-                trap:      m.trap,
                 mem_wmask: store_m ? store_mask : 4'b0000,
                 mem_wdata: store_m ? store_value : '0
             };
@@ -424,7 +487,6 @@ module core
     assign rvfi_valid     = w.valid && !freeze;
     assign rvfi_pc        = w.pc;
     assign rvfi_insn      = w.instr;
-    assign rvfi_trap      = w.trap;
     assign rvfi_rd        = wb_we ? w.rd : 5'd0;
     assign rvfi_rd_wdata  = wb_we ? wb_data : '0;
     assign rvfi_mem_read  = w.valid && w.mem_read;

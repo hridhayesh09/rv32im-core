@@ -31,7 +31,7 @@ STORES = {"sb": 0, "sh": 1, "sw": 2}
 BRANCHES = {"beq": 0, "bne": 1, "blt": 4, "bge": 5, "bltu": 6, "bgeu": 7}
 
 FLAGS = ["reg_write", "mem_read", "mem_write", "branch", "jal", "jalr", "muldiv", "fence_i",
-         "uses_rs1", "uses_rs2", "ecall", "ebreak", "illegal"]
+         "uses_rs1", "uses_rs2", "ecall", "ebreak", "mret", "csr", "illegal"]
 
 
 # ---- encoder (one function per instruction format) ----
@@ -77,7 +77,8 @@ def random_instruction(rng):
     imm12 = rng.randrange(-2048, 2048)
     writes = int(rd != 0)
     kind = rng.choice(["r", "m", "i", "shift", "load", "store", "branch", "lui", "auipc",
-                       "jal", "jalr", "fence", "fence_i", "ecall", "ebreak"])
+                       "jal", "jalr", "fence", "fence_i", "ecall", "ebreak", "mret",
+                       "csr", "csri"])
 
     if kind == "r":
         name = rng.choice(list(R_TYPE))
@@ -141,6 +142,15 @@ def random_instruction(rng):
         return kind, enc_i(OP_MISC_MEM, 1, 0, 0, 0), expect(fence_i=1)
     if kind == "ecall":
         return kind, 0x00000073, expect(ecall=1)
+    if kind == "mret":
+        return kind, 0x30200073, expect(mret=1)
+    if kind in ("csr", "csri"):
+        # CSRRW/S/C (register) or CSRRWI/SI/CI (immediate): imm carries the CSR address.
+        f3 = rng.choice([1, 2, 3]) + (4 if kind == "csri" else 0)
+        address = rng.getrandbits(12)
+        return kind, enc_i(OP_SYSTEM, f3, rd, rs1, address), expect(
+            rd=rd, rs1=rs1, imm=address, funct3=f3, csr=1, reg_write=writes,
+            uses_rs1=int(kind == "csr"))
     return kind, 0x00100073, expect(ebreak=1)
 
 
@@ -168,7 +178,9 @@ def is_legal(w):
     if op == OP_MISC_MEM:
         return f3 in (0, 1)  # FENCE, FENCE.I
     if op == OP_SYSTEM:
-        return w in (0x00000073, 0x00100073)
+        if f3 == 0:
+            return w in (0x00000073, 0x00100073, 0x30200073)   # ECALL, EBREAK, MRET
+        return f3 != 4                                       # CSR instructions
     return False
 
 

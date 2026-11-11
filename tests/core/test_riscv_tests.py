@@ -10,8 +10,6 @@ INCLUDES = [ROOT / "tests" / "env", ISA / "macros" / "scalar"]
 
 # Tests that cannot pass on this core, and why.
 EXCLUDED = {
-    "ma_data": "misaligned loads/stores: the core has no misaligned access support or trap "
-               "handler yet",
 }
 
 

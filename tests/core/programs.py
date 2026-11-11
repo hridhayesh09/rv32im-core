@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build" / "programs"
 BASE_ADDR = 0x80000000
 
-CFLAGS = ["-march=rv32im_zifencei", "-mabi=ilp32", "-nostdlib", "-nostartfiles", "-mno-relax",
+CFLAGS = ["-march=rv32im_zicsr_zifencei", "-mabi=ilp32", "-nostdlib", "-nostartfiles", "-mno-relax",
           "-Wl,--no-warn-rwx-segments"]
 
 
@@ -42,12 +42,13 @@ _REG = re.compile(r"\sx(\d+)\s+0x([0-9a-f]+)")   # \s: don't match the "x" insid
 _MEM = re.compile(r"mem 0x([0-9a-f]+)(?: 0x([0-9a-f]+))?")
 
 
-def spike_trace(elf, tohost, isa="rv32im_zifencei"):
+def spike_trace(elf, tohost, isa="rv32im_zicsr_zicntr_zifencei"):
     """Run the program on Spike and return its retired instructions, up to and including
     the store to tohost. Each entry: pc, insn, rd, rd_wdata, mem (None, "load" or "store"),
     mem_addr, store_data, store_bytes."""
     try:
-        proc = subprocess.run(["spike", f"--isa={isa}", "--log-commits", str(elf)],
+        # --priv=m: machine mode only, like this core (so mstatus.MPP stays M after MRET).
+        proc = subprocess.run(["spike", f"--isa={isa}", "--priv=m", "--log-commits", str(elf)],
                               capture_output=True, text=True, timeout=60)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{elf.name}: Spike still running after 60 s; "

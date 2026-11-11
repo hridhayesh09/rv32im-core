@@ -9,7 +9,6 @@ module tb_top (
     output logic        rvfi_valid,
     output logic [31:0] rvfi_pc,
     output logic [31:0] rvfi_insn,
-    output logic        rvfi_trap,
     output logic [4:0]  rvfi_rd,
     output logic [31:0] rvfi_rd_wdata,
     output logic        rvfi_mem_read,

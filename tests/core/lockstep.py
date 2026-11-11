@@ -57,7 +57,6 @@ async def lockstep(dut):
             continue
         idle = 0
         got, exp = sample(dut), expected[retired]
-        assert not int(dut.rvfi_trap.value), f"#{retired}: trap at {describe(got)}"
         assert got == exp, f"mismatch at instruction #{retired}\n  spike: {describe(exp)}\n  core:  {describe(got)}"
         retired += 1
 

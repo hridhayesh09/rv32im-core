@@ -73,9 +73,9 @@ All numbers come from `make test` (Verilator 5.036, Spike, GCC 13.2.0) unless no
 | Check | Result |
 |---|---|
 | Unit tests: ALU, register file, decoder, mul/div unit against Python models | pass |
-| Official riscv-tests rv32ui, in lockstep with Spike | **41 / 42** pass; `ma_data` (misaligned access) excluded ([why](docs/notes.md#stage-1-step-6-the-official-riscv-tests)) |
+| Official riscv-tests rv32ui, in lockstep with Spike | **42 / 42** pass (misaligned accesses trap and are emulated by a handler, [how](docs/notes.md#stage-5-step-1-exceptions-and-csrs)) |
 | Official riscv-tests rv32um, in lockstep with Spike | **8 / 8** pass (2,181 instructions compared) |
-| Directed programs (forwarding, load-use, flush, mul/div, FENCE.I) in lockstep | 7 / 7 pass |
+| Directed programs (forwarding, load-use, flush, mul/div, FENCE.I, traps and CSRs) in lockstep | 8 / 8 pass |
 | Random RV32IM programs in lockstep (20 per CI run) | pass; a local 300-program run (`RANDOM_PROGRAMS=300 make test`) compared 140,887 instructions with 0 mismatches |
 | C programs (GCC -O2) in lockstep | 3 / 3 pass |
 | All of the above again with random wait states on every data access | pass |

@@ -1016,3 +1016,81 @@ the NPU path, compared with NumPy, in simulation and on the board.
 Integer matrix products give int32 sums; scaling back to int8 is a multiply by a fixed-point
 constant and a rounding shift (`(acc * 9710 + 2^23) >> 24`), clipped to the int8 range. That's the
 same idea TensorFlow Lite uses, and it's exact, so the hardware can match the reference bit for bit.
+
+## Stage 5, step 1: exceptions and CSRs
+
+### What an exception is
+When an instruction can't complete normally (it isn't a valid instruction, it asks for the
+operating system with ECALL, it hits a breakpoint, or it accesses memory at a misaligned
+address), the CPU stops running the program, saves where it was, and jumps to a **trap
+handler**: code at the address in `mtvec`. The handler deals with it and returns with `mret`.
+
+### The CSRs (control and status registers, `rtl/csr.sv`)
+Special registers, read and written with the CSR instructions (`csrrw`, `csrrs`, `csrrc` and their
+immediate forms; each one reads the old value into rd and writes, sets or clears bits):
+- `mtvec`: where the trap handler is.
+- `mepc`: the address of the instruction that trapped (so the handler can return to it, or past it).
+- `mcause`: why (2 illegal instruction, 3 breakpoint, 11 ECALL, 4/6 misaligned load/store,
+  0 misaligned jump target).
+- `mtval`: extra information: the bad address, or the bad instruction.
+- `mstatus`: MIE (interrupts enabled) and MPIE (what MIE was before the trap). A trap saves MIE in
+  MPIE and clears MIE; `mret` restores it.
+- `mscratch`: a spare register for the handler (it swaps it with a real register to get a pointer
+  to a save area without destroying anything).
+- `mcycle`, `minstret`: 64-bit counters of clock cycles and retired instructions.
+
+### Precise exceptions in a pipeline
+"Precise" means: when the handler starts, every instruction before the trapping one has finished,
+and none after it has had any effect. This core detects every exception in EX:
+- the trapping instruction becomes a bubble (it never reaches MEM, so it can't write memory or a
+  register);
+- the two younger instructions (in IF and ID) are flushed, like after a taken branch;
+- the older instructions in MEM and WB finish normally;
+- fetch restarts at `mtvec`.
+Since nothing after EX can trap, nothing can go wrong after the exception is decided.
+
+**A detail worth knowing:** `minstret` counts instructions as they retire (WB), but a CSR
+instruction reads it in EX, when the two older instructions in MEM and WB haven't retired yet. The
+core adds them in, so the value is exactly "instructions before this one", as the ISA defines it.
+Without that, a program would see a count that's off by up to 2; the trap test caught that when
+the adjustment was taken out on purpose.
+
+### Misaligned accesses: emulation in software
+RISC-V lets hardware either support misaligned loads and stores or trap on them. This core traps
+(`mcause` 4 or 6), and the test environment's handler (`tests/env/riscv_test.h`) emulates them the
+way firmware does on many real RISC-V systems: save all registers, decode the faulting instruction
+from `mepc`, do the access one byte at a time at `mtval`, put the result into the saved destination
+register, set `mepc` past the instruction, restore, `mret`. With that, the official `ma_data`
+test passes: **rv32ui is 42/42**.
+
+### Testing
+Spike (run machine-mode only, `--priv=m`, like this core) traps the same way, so the lockstep
+comparison follows every trap, every handler instruction and every `mret`: 8,393 instructions in
+`ma_data` matched. `tests/asm/traps.S` checks the rest: ECALL, EBREAK, an illegal instruction, a
+CSR that doesn't exist, a misaligned load, store and jump (each with the right `mcause`, `mepc`
+and `mtval`), all six CSR instruction forms, writing a read-only CSR (illegal), MIE/MPIE through a
+trap and `mret`, and `minstret` counting exactly 5 for 5 instructions.
+
+### Interview questions
+
+**What makes an exception precise, and how does your pipeline guarantee it?**
+All older instructions complete, the faulting one and all younger ones have no effect, and `mepc`
+points at the faulting instruction. Exceptions are only detected in EX; the faulting instruction
+becomes a bubble, younger ones are flushed, older ones in MEM and WB finish. Nothing later in the
+pipeline can fault, so the decision is never undone.
+
+**Why use `mscratch` in a trap handler?**
+The handler needs a register to hold a pointer to its save area, but every register belongs to the
+interrupted program. `csrrw t0, mscratch, t0` swaps them in one instruction: t0 now points to the
+save area and the program's t0 is safe in `mscratch`.
+
+**Why emulate misaligned accesses instead of supporting them in hardware?**
+Hardware support means splitting one access into two and merging the bytes, which complicates the
+memory stage for something compiled C code almost never does. Trapping keeps the hardware simple
+and still runs every program correctly, just slowly in the rare misaligned case. Many RISC-V
+systems do exactly this in their firmware.
+
+**What's the difference between an exception and an interrupt?**
+An exception is caused by the instruction itself (synchronous); an interrupt comes from outside
+(a timer, a device) at any moment (asynchronous). Both use the same trap mechanism; this core has
+exceptions so far, interrupts come later.

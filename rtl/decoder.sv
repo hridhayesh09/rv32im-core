@@ -27,6 +27,8 @@ module decoder
     output logic        uses_rs2,
     output logic        ecall,
     output logic        ebreak,
+    output logic        mret,
+    output logic        csr,        // CSRRW/S/C(I): imm = CSR address, rs1 field = zimm
     output logic        illegal
 );
     logic [6:0] opcode;
@@ -84,6 +86,8 @@ module decoder
         uses_rs2  = 1'b0;
         ecall     = 1'b0;
         ebreak    = 1'b0;
+        mret      = 1'b0;
+        csr       = 1'b0;
         illegal   = 1'b0;
 
         case (opcode)
@@ -156,9 +160,19 @@ module decoder
                 illegal   = funct3 != 3'b000 && funct3 != 3'b001;
             end
             OP_SYSTEM: begin
-                ecall     = instr == 32'h0000_0073;
-                ebreak    = instr == 32'h0010_0073;
-                illegal   = !(ecall || ebreak);
+                if (funct3 == 3'b000) begin
+                    ecall   = instr == 32'h0000_0073;
+                    ebreak  = instr == 32'h0010_0073;
+                    mret    = instr == 32'h3020_0073;
+                    illegal = !(ecall || ebreak || mret);
+                end else if (funct3 != 3'b100) begin   // rd = CSR; CSR = f(CSR, rs1 or zimm)
+                    csr       = 1'b1;
+                    imm       = {20'b0, instr[31:20]};
+                    writes_rd = 1'b1;
+                    uses_rs1  = !funct3[2];             // register forms read rs1
+                end else begin
+                    illegal = 1'b1;
+                end
             end
             default: illegal = 1'b1;
         endcase
@@ -172,6 +186,7 @@ module decoder
             jalr      = 1'b0;
             muldiv    = 1'b0;
             fence_i   = 1'b0;
+            csr       = 1'b0;
             uses_rs1  = 1'b0;
             uses_rs2  = 1'b0;
         end
