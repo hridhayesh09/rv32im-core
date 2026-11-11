@@ -140,7 +140,7 @@ A CPU-only build with 4 KB instruction and data caches and the 8-bit VGA mode (n
 
 | Logic elements | Memory bits | 9-bit multipliers | Fmax (slow, 85 °C) | Setup slack at 50 MHz |
 |---|---|---|---|---|
-| 35,646 (72 %) | 1,164,584 (69 %), 167 / 182 M9K | 136 (47 %) | 56.47 MHz | +2.292 ns |
+| 35,772 (72 %) | 1,165,096 (69 %), 168 / 182 M9K | 136 (47 %) | 56.97 MHz | +2.448 ns |
 
 **Snake on the CPU** (frame captured from the simulated VGA monitor; [how it's tested](docs/notes.md#stage-3-graphics))
 
