@@ -26,3 +26,4 @@ output_files/
 # ASIC flow output (Stage 6)
 asic/build/
 asic/runs/
+slpp_all/
