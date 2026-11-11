@@ -17,6 +17,8 @@ module tb_top (
     output logic [31:0] rvfi_mem_wdata
 );
     logic        imem_en, dmem_en, dmem_stall;
+    logic [3:0]  mem_events;
+    assign mem_events = 4'b0000;   // no caches here
     logic [3:0]  dmem_we;
     logic [31:0] imem_addr, imem_rdata, dmem_addr, dmem_wdata, dmem_rdata;
 

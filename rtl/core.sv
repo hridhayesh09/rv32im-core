@@ -34,6 +34,8 @@ module core
     output logic [31:0] dmem_wdata,
     input  logic [31:0] dmem_rdata,
     input  logic        dmem_stall,     // the access of the instruction in WB isn't done yet
+    input  logic [3:0]  mem_events,     // from the memory system, counted by mhpmcounter8-11:
+                                        // I-cache access, I-cache miss, D-cache access, D-cache miss
 
     output logic        rvfi_valid,
     output logic [31:0] rvfi_pc,
@@ -117,7 +119,7 @@ module core
     // Hazard control (set below).
     logic        redirect;      // EX: taken branch or jump
     logic [31:0] redirect_pc;
-    logic        stall_f, stall_d, stall_e, flush_d, flush_e;
+    logic        stall_f, stall_d, stall_e, flush_d, flush_e, load_use;
     logic        freeze;        // everything holds: WB is waiting for a slow data access
     assign freeze = dmem_stall;
 
@@ -359,7 +361,13 @@ module core
         .mepc_out    (mepc),
         .retire      (w.valid && !freeze),
         .mem_pending (m.valid),
-        .wb_pending  (w.valid)
+        .wb_pending  (w.valid),
+        .events      ({mem_events,                              // 8-11: caches
+                        freeze,                                  // 7: memory wait cycles
+                        stall_e && !freeze,                      // 6: mul/div wait cycles
+                        load_use && !freeze,                     // 5: load-use stall cycles
+                        ex_fire && !exception && jump_e,         // 4: mispredicts
+                        ex_fire && !exception && (e.branch || e.jal || e.jalr)})  // 3: branches
     );
 
     // FENCE.I redirects to the next instruction: the 2 younger instructions, fetched before an
@@ -473,7 +481,6 @@ module core
     // arrives when the load is in WB, so hold IF and ID for one cycle and put a bubble into EX.
     // After that cycle the load is in MEM; when the consumer then moves into EX, the load is in
     // WB and forwarding supplies the value.
-    logic load_use;
     assign load_use = e.valid && e.mem_read && e.reg_write && d.valid &&
                       ((uses_rs1_d && rs1_d == e.rd) || (uses_rs2_d && rs2_d == e.rd));
 

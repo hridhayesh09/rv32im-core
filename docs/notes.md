@@ -1094,3 +1094,47 @@ systems do exactly this in their firmware.
 An exception is caused by the instruction itself (synchronous); an interrupt comes from outside
 (a timer, a device) at any moment (asynchronous). Both use the same trap mechanism; this core has
 exceptions so far, interrupts come later.
+
+## Stage 5, step 2: performance counters
+
+Before optimizing, measure. The standard RISC-V way: `mhpmcounter3` to `mhpmcounter31` CSRs,
+64-bit counters of hardware events, read from C with `csrr` (`sw/lib/perf.h`). This core has 9,
+each wired to a fixed event (`rtl/csr.sv`, `rtl/core.sv`):
+
+| CSR | Counts |
+|---|---|
+| mhpmcounter3 | branches and jumps executed |
+| mhpmcounter4 | mispredicts: control flow that redirected fetch (with predict-not-taken, every taken branch and jump) |
+| mhpmcounter5 | load-use stall cycles |
+| mhpmcounter6 | cycles waiting for multiply/divide |
+| mhpmcounter7 | cycles waiting for slow memory (bus, SDRAM) |
+| mhpmcounter8-11 | instruction/data cache accesses and misses (from Stage 5's caches) |
+
+**Tested with kernels whose counts are known exactly** (`sw/soc/perf_test.c`, in the SoC
+simulation): a 100-iteration loop gives 100 branches and 99 mispredicts; 50 load-then-use pairs
+give 50 stall cycles; 10 divides give 330 wait cycles (33 each) and 10 multiplies 20 (2 each); a
+bus read waits 2 cycles (one for the peripheral's ack, one for the registered read data).
+
+Two things the test taught:
+- **Counting the counter read itself.** The difference between two `minstret` reads around a
+  201-instruction loop is 204: it counts every instruction from the first read up to (not
+  including) the second, so the first read and the two other counter reads in between count too.
+- **Events still in flight.** A CSR is read in EX; a load just ahead of it is still in MEM and
+  hasn't waited yet (it waits in WB). So events from the two instructions right before a counter
+  read may not be counted yet. `minstret` adds those instructions in; for the other counters,
+  measure at least 2 instructions after the code of interest (or around a block big enough not to
+  matter). Also, the read needs a `"memory"` clobber in the inline assembly, or the compiler may
+  move loads and stores across it.
+
+### Interview questions
+
+**How would you find out why a program is slow on your CPU?**
+Read the performance counters around the slow part: instructions vs cycles gives CPI, and the
+stall counters say where the extra cycles go (mispredicts, load-use, mul/div, memory, cache
+misses). Then fix the biggest one and measure again.
+
+**Why are counter reads in a pipeline slightly imprecise?**
+The read happens in one stage while older instructions are still in later stages; their events
+(like a load's memory wait in WB) can land after the read. The ISA only defines `minstret`
+exactly, and this core compensates for it; the event counters are good for blocks of code, not
+single instructions.

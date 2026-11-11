@@ -57,6 +57,20 @@ async def hello(dut):
 
 
 @cocotb.test()
+async def perf(dut):
+    """Performance counters on kernels with exactly known event counts (sw/soc/perf_test.c)."""
+    text = await run_until_done(dut, 1_000_000)
+    # 100 branches, 99 taken (all mispredicted: the core predicts not taken). Instructions from the
+    # first minstret read up to the second: the read itself, li, 200 in the loop, 2 counter reads.
+    assert "loop: branches 100 mispredicts 99 instret 204\r\n" in text
+    assert "load-use: 50\r\n" in text
+    assert "divide wait: 330\r\n" in text        # 33 cycles per divide
+    assert "multiply wait: 20\r\n" in text       # 2 cycles per multiply
+    # A bus read: one cycle until the peripheral acks, one for the bridge's registered read data.
+    assert "bus read wait: 2\r\n" in text
+
+
+@cocotb.test()
 async def sdram(dut):
     text = await run_until_done(dut, 2_000_000)
     assert "SDRAM PASS\r\n" in text
@@ -143,14 +157,14 @@ def soc_runner():
     return build_soc()
 
 
-@pytest.mark.parametrize("program", ["hello", "sdram_test"])
+@pytest.mark.parametrize("program", ["hello", "sdram_test", "perf_test"])
 def test_soc(soc_runner, program):
     bootrom = build_bootrom(SW / "boot" / "jump_to_ram.S")
     hexfile = build_program(SW / "soc" / f"{program}.c")
     soc_runner.test(
         hdl_toplevel="tb_soc",
         test_module="test_soc",
-        testcase="sdram" if program == "sdram_test" else program,
+        testcase={"sdram_test": "sdram", "perf_test": "perf"}.get(program, program),
         test_dir=HERE,
         plusargs=[f"+bootrom={bootrom}", f"+program={hexfile}"],
         results_xml=str(hexfile.with_suffix(".result.xml")),

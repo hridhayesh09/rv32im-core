@@ -10,6 +10,9 @@
 //   0xB00/0xB80 mcycle(h), 0xB02/0xB82 minstret(h): 64-bit counters, read/write
 //   0xC00/0xC80 cycle(h), 0xC02/0xC82 instret(h): read-only copies
 //   0xF11-0xF15 mvendorid, marchid, mimpid, mhartid, mconfigptr: read 0
+//   0xB03-0xB0B/0xB83-0xB8B mhpmcounter3-11(h): event counters (see events), read/write;
+//                  0xC03-0xC0B/0xC83-0xC8B: read-only copies; 0x323-0x32B mhpmevent3-11 read 0
+//                  (each counter's event is fixed)
 // Any other address, or a write to a read-only CSR (address bits 11:10 = 11), is illegal.
 //
 // A CSR instruction executes in EX. minstret counts retired instructions (at WB); when EX reads
@@ -40,11 +43,27 @@ module csr (
     // retirement, for minstret
     input  logic        retire,         // an instruction retires (WB) this cycle
     input  logic        mem_pending,    // an instruction in MEM will still retire
-    input  logic        wb_pending      // an instruction in WB retires this cycle
+    input  logic        wb_pending,     // an instruction in WB retires this cycle
+
+    // performance events, one bit per counter: events[i] adds 1 to mhpmcounter(3+i) this cycle
+    input  logic [8:0]  events
 );
+    localparam int NUM_HPM = 9;          // mhpmcounter3 .. mhpmcounter11
     logic        mie_bit, mpie;
     logic [31:0] mie, mtvec, mscratch, mepc, mcause, mtval;
     logic [63:0] mcycle, minstret;
+    logic [63:0] hpm [NUM_HPM];
+
+    // Which event counter (if any) an address names: 0xB03.. / 0xB83.. / 0xC03.. / 0xC83..
+    logic        hpm_sel, hpm_high, hpm_event_sel;
+    logic [3:0]  hpm_idx;
+    always_comb begin
+        hpm_idx  = addr[3:0] - 4'd3;
+        hpm_sel  = (addr[11:8] == 4'hB || addr[11:8] == 4'hC) && addr[6:4] == 3'b000 &&
+                   addr[3:0] >= 4'd3 && addr[3:0] <= 4'd11;
+        hpm_high = addr[7];
+        hpm_event_sel = addr[11:4] == 8'h32 && addr[3:0] >= 4'd3 && addr[3:0] <= 4'd11;
+    end
 
     logic [63:0] instret_now;           // minstret as the instruction in EX sees it
     assign instret_now = minstret + {63'b0, mem_pending} + {63'b0, wb_pending};
@@ -73,8 +92,12 @@ module csr (
             12'hB82, 12'hC82: rdata = instret_now[63:32];
             12'hF11, 12'hF12, 12'hF13, 12'hF14, 12'hF15: rdata = '0;
             default: begin
-                rdata = '0;
-                known = 1'b0;
+                if (hpm_sel)             rdata = hpm_high ? hpm[hpm_idx][63:32] : hpm[hpm_idx][31:0];
+                else if (hpm_event_sel)  rdata = '0;
+                else begin
+                    rdata = '0;
+                    known = 1'b0;
+                end
             end
         endcase
     end
@@ -106,9 +129,11 @@ module csr (
             mtval    <= '0;
             mcycle   <= '0;
             minstret <= '0;
+            for (int i = 0; i < NUM_HPM; i++) hpm[i] <= '0;
         end else begin
             mcycle   <= mcycle + 64'd1;
             minstret <= minstret + {63'b0, retire};
+            for (int i = 0; i < NUM_HPM; i++) hpm[i] <= hpm[i] + {63'b0, events[i]};
 
             if (trap) begin
                 mepc    <= {trap_pc[31:2], 2'b00};
@@ -136,7 +161,12 @@ module csr (
                     // still retire (and count), so start that much lower.
                     12'hB02: minstret <= {minstret[63:32], wdata} - {63'b0, mem_pending} - 64'd1;
                     12'hB82: minstret <= {wdata, minstret[31:0]} - {63'b0, mem_pending} - 64'd1;
-                    default: ;
+                    default: begin
+                        if (hpm_sel && addr[11:8] == 4'hB) begin
+                            if (hpm_high) hpm[hpm_idx][63:32] <= wdata;
+                            else          hpm[hpm_idx][31:0]  <= wdata;
+                        end
+                    end
                 endcase
             end
         end

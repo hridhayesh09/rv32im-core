@@ -58,6 +58,7 @@ module soc #(
         .clk, .rst,
         .imem_en, .imem_addr, .imem_rdata,
         .dmem_en, .dmem_we, .dmem_addr, .dmem_wdata, .dmem_rdata, .dmem_stall,
+        .mem_events (4'b0000),   // no caches yet
         .rvfi_valid(), .rvfi_pc(), .rvfi_insn(), .rvfi_rd(), .rvfi_rd_wdata(),
         .rvfi_mem_read(), .rvfi_mem_wmask(), .rvfi_mem_addr(), .rvfi_mem_wdata()
     );
