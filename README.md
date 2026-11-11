@@ -12,7 +12,7 @@ SystemVerilog, grown into a system-on-chip on the Terasic DE10-Lite (Intel MAX 1
 | 0 | Toolchain, repo skeleton, CI | done |
 | 1 | 5-stage RV32IM pipeline, riscv-tests, Spike lockstep, random tests, C programs | done |
 | 2 | SoC: Wishbone bus, boot ROM, SDRAM, UART, timer, GPIO, UART bootloader | **runs on the DE10-Lite**: bootloader, hello, 64 MB SDRAM test ([board log](docs/results/board_2026-11-07.md)) |
-| 3 | VGA framebuffer, graphics driver, a playable game | built and simulated (Snake); in the board image; not yet checked on a monitor |
+| 3 | VGA framebuffer, graphics driver, a playable game | **runs on the DE10-Lite**: Snake's title screen on a real VGA monitor |
 | 4 | Systolic array accelerator, MNIST software vs accelerator | **runs on the DE10-Lite**: 16x16 NPU, MNIST bit-exact, 38.49x faster than software |
 | 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | planned |
 | stretch | Doom; OpenLane on Sky130 | planned |
