@@ -152,15 +152,52 @@ buffer. Custom instructions pay off for small, frequent operations on register d
 4. MNIST in C, software and NPU versions; SoC simulation test: same logits as NumPy, speedup.
 5. Board checklist and what to film.
 
-## Stage 5: Architect-level tradeoffs
+## Stage 5: CPU microarchitecture
 
-- I and D caches, branch predictor.
-- Measured tradeoffs: cache size vs IPC, predictor vs no predictor, area cost; CoreMark.
+Order matters: Doom needs Stage 5 (its code, ~0.5-1 MB, and data, ~10 MB, only fit in SDRAM, and
+running from SDRAM without an instruction cache costs ~14 cycles per instruction).
+
+1. **Exceptions and CSRs (Zicsr, machine mode):** traps for illegal instructions, ECALL, EBREAK
+   and misaligned loads/stores/jumps, taken precisely in EX; `mret`; `mstatus`, `mtvec`, `mepc`,
+   `mcause`, `mtval`, `mscratch`, `misa`, `mhartid`, `mcycle`, `minstret`. Misaligned accesses are
+   emulated by a trap handler (as firmware does on real RISC-V systems), so `ma_data` passes:
+   rv32ui 42/42. Spike traps the same way, so lockstep covers trap entry, handler and `mret`.
+2. **Performance counters** (`mhpmcounter3+`, standard CSRs readable from C): I/D cache hits and
+   misses, branch mispredicts, stall cycles.
+3. **SDRAM burst reads** of whole cache lines (checked against the SDRAM chip model).
+4. **I-cache:** configurable size, direct-mapped or 2-way (LRU), code running from SDRAM.
+5. **D-cache: write-back, write-allocate.** SDRAM writes cost ~11 cycles each; write-through would
+   send every store there. FENCE.I writes back dirty lines and invalidates the I-cache, so code
+   written as data (the bootloader, a program loader) then runs correctly.
+6. **Branch prediction:** BTB + 2-bit bimodal, then gshare, then a return address stack.
+7. **CoreMark** (EEMBC, Apache-2.0); official-format scores only from board runs of 10 s or more.
+8. **Tradeoff table** from real runs: cache size and associativity vs IPC and CoreMark/MHz,
+   predictor vs mispredict rate, and the LE/M9K cost of each (Quartus).
+
+Build configurations: a CPU-only build (no NPU, frees ~55 M9K) for the experiments and Doom; the
+full SoC keeps the NPU and gets caches only if Quartus says they fit. Every existing test keeps
+passing with the caches on: riscv-tests, Spike lockstep and random programs run with the program
+in slow memory behind the caches.
+
+## Doom
+1. picolibc as the C library; `malloc` and an in-memory file system on SDRAM.
+2. An 8-bit, 256-colour framebuffer at Doom's 320x200 (CPU-only build), Doom's palette mapped to
+   the board's 12-bit colours.
+3. `doomgeneric` (GPL-2.0, submodule): video, ticks, sleep and key callbacks.
+4. A 2 Mbaud bootloader mode for the ~4 MB WAD; `tools/doom_keys.py` sends key presses/releases.
+5. Freedoom (BSD) for tests; DOOM1.WAD (shareware, not committed) optionally for the demo.
+6. Frame rate measured on the board.
+
+## Stage 6: ASIC flow
+1. Technology-independent memories: one wrapper with an FPGA version (altsyncram) and an ASIC
+   version (Sky130 SRAM macros or register-based RAM).
+2. OpenLane 2 on Sky130: the core plus small caches to GDS, clean DRC and LVS.
+3. Area, maximum frequency (STA) and estimated power from the actual reports.
+4. Gate-level simulation of the final netlist on riscv-tests.
+5. A layout screenshot in the README.
 
 ## Stretch
-
-- Doom on the CPU.
-- OpenLane on Sky130 for timing, area and power.
+- Out-of-order execution.
 
 ## What needs the board
 
