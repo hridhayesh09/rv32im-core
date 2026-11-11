@@ -252,8 +252,10 @@ module soc #(
         .line_we    (1'b0),
         .line_addr  ('0),
         .line_wdata ('0),
+        /* verilator lint_off PINCONNECTEMPTY */
         .line_rdata (),
         .line_ack   (),
+        /* verilator lint_on PINCONNECTEMPTY */
         .sdram_cke, .sdram_cs_n, .sdram_ras_n, .sdram_cas_n, .sdram_we_n,
         .sdram_ba, .sdram_addr, .sdram_dqm, .sdram_dq_out, .sdram_dq_oe, .sdram_dq_in
     );
