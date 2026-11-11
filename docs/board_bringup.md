@@ -96,6 +96,21 @@ To switch bitstreams: `quartus_pgm -c USB-Blaster -m jtag -o "p;output_files/rv3
 `Iterations`, `Timed mispredicts`). CoreMark/MHz = Iterations x 1,000,000 / Timed cycles.
 Save the whole output into the board log.
 
+## Doom
+Needs the CPU-only bitstream (`rv32im_cpu.sof`: caches and the 8-bit VGA mode) and a WAD: Freedoom
+(`freedoom1.wad` from freedoom.github.io, free) or your own `DOOM1.WAD`. Build with
+`python3 tools/build_doom.py` (in WSL), then:
+```bash
+python tools/upload.py COM8 build/sw/jump_to_sdram.bin --fast 2000000 --data 0x40000000 build/sw/doom.bin --data 0x42000000 build/doom/freedoom1.wad --until "fps"
+```
+The WAD goes at 2 Mbaud (about 2.5 minutes for Freedoom). **SW0 down: play; SW0 up: Doom's
+benchmark** (`-timedemo demo1`, prints `timed ... fps` at the end). To play, close the upload and
+start the keyboard window, click it, and use arrows, Ctrl (fire), Space (open), Enter/Escape:
+```bash
+python tools/doom_keys.py COM8
+```
+The frame rate is printed every 5 seconds (in the keyboard window, or on the terminal).
+
 ## What to film (Stage 2 demo video, ~1 minute)
 1. The board with the USB-serial adapter wired up (2 s close-up).
 2. Pressing the two keys together: the terminal shows the bootloader banner and `ready`.

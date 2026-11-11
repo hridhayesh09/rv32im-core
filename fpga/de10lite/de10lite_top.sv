@@ -21,7 +21,8 @@ module de10lite_top #(
     parameter int BP_MODE     = 2,      // branch predictor: 0 none, 1 bimodal, 2 gshare
     parameter int BTB_BITS    = 5,
     parameter int BHT_BITS    = 8,
-    parameter int RAS_DEPTH   = 4
+    parameter int RAS_DEPTH   = 4,
+    parameter bit VGA8        = 1'b0    // VGA: 0 = 320x240, 16 colours; 1 = 320x200, 256 (Doom)
 ) (
     input  logic        MAX10_CLK1_50,
     input  logic [1:0]  KEY,
@@ -83,7 +84,8 @@ module de10lite_top #(
         .BP_MODE      (BP_MODE),
         .BTB_BITS     (BTB_BITS),
         .BHT_BITS     (BHT_BITS),
-        .RAS_DEPTH    (RAS_DEPTH)
+        .RAS_DEPTH    (RAS_DEPTH),
+        .VGA8         (VGA8)
     ) u_soc (
         .clk, .rst,
         .txd,

@@ -1462,3 +1462,60 @@ the capture point to an earlier measurement on the same board.
 The data window from the SDRAM is about 20 ns wide and doesn't line up with our rising edges: one
 is too early, the next is too late. The falling edge in between lands in the middle. Capturing in
 the I/O cell makes that moment fixed by the silicon, not by routing.
+
+## Doom
+
+### What runs where
+- **The game** is doomgeneric (a port of Doom that only needs a few platform functions), as a git
+  submodule. Our part is `sw/doom`: drawing a frame, reading the clock, reading keys, and the
+  system calls the C library needs.
+- **The C library** is picolibc (Ubuntu's `picolibc-riscv64-unknown-elf`, unpacked into
+  `~/tools/picolibc` so it needs no admin install). Doom uses `malloc`, `printf`, `fopen`/`fread`
+  and string functions. picolibc's `fopen` ends in `open`/`read`/`lseek`/`close`, which
+  `sw/doom/doom_sys.c` provides: the only file that opens is the WAD, already sitting in SDRAM.
+- **Memory**: everything is in SDRAM through the caches. Code and constants at 0x4000_0000, data,
+  heap (Doom asks for a 6 MB zone) and stack after them, the WAD at 0x4200_0000. picolibc's own
+  start-up code and linker script are used, because they also set up thread-local storage (where
+  picolibc keeps `errno`).
+- **The picture**: a new 8-bit VGA mode (CPU-only build only, the full build keeps the 4-bit mode
+  for Snake). 320x200 at one byte per pixel is exactly Doom's own screen format, so doomgeneric's
+  frame buffer pointer is aimed straight at video memory: each frame is one `memcpy` of 64,000
+  bytes, done with word stores (4 pixels each). Doom's 256-colour palette goes into a palette RAM
+  only when it changes (the red flash when hit, the gold flash on pickups).
+- **Loading**: a 28.8 MB WAD at 115,200 baud would take 42 minutes. The bootloader got a `BAUD`
+  command (switch to 2 Mbaud, 25 clocks per bit), the UART got a 64-byte receive FIFO (bytes keep
+  arriving during a cache miss), and the bootloader's CRC uses a lookup table. Upload: 144 s.
+- **Keys**: `tools/doom_keys.py` opens a small window and sends 2 bytes per key press or release.
+
+### Two hardware lessons
+- **Block RAM port widths.** The first framebuffer had the CPU port 32 bits wide in true dual-port
+  mode; Quartus refused, because an M9K port is at most 18 bits wide in that mode. In simple
+  dual-port mode (one write port, one read port) 32 bits is allowed. The cost: the CPU can't read
+  the framebuffer back, and Doom never does (it keeps its own copy of the screen).
+- **The palette adds a pipeline stage.** Pixel colour now needs two RAM reads in a row (framebuffer,
+  then palette). The sync signals are delayed by the same two stages, or the picture would shift
+  sideways; the unit test checks every pixel position on a captured frame.
+
+### Result
+Doom's built-in benchmark (`-timedemo demo1`, every tic drawn, as fast as possible): 7,117 game
+tics in 607 seconds, **11.7 frames per second**. While it ran, 5-second windows ranged from 7.4 to
+14.7 fps, depending on the scene. The build: 14,059 LEs, 149 of 182 M9K, 55.11 MHz.
+
+### Interview questions
+
+**How did you get a full game running on your own CPU?**
+By keeping the platform layer small: the game is portable C, the C library is an existing one,
+and I wrote the five platform functions plus the system calls. The hard part was the hardware it
+needed: an SDRAM controller that works on the real board, caches, a video mode matching the game's
+format, and a fast enough upload path for a 28 MB data file.
+
+**Where does the time go at 11.7 fps?**
+About 4.3 million cycles per frame at 50 MHz. Doom's renderer is mostly column and span drawing:
+loads from textures and the colormap, stores into the frame, with lots of multiplies for
+perspective. The obvious next steps would be measuring with the performance counters (cache
+misses, mispredicts per frame) before changing anything.
+
+**Why not keep the frame in normal memory and copy it?**
+That's what doomgeneric does by default (draw into a buffer, then copy). Pointing its buffer at
+video memory removes one 64,000-byte copy per frame. It only works because the video memory takes
+word writes and Doom never reads it back.

@@ -195,6 +195,45 @@ async def load_command(dut):
     assert "loaded: LOAD works ok!" in text
 
 
+@cocotb.test()
+async def baud_switch(dut):
+    """BAUD: the bootloader answers OK at the old rate and switches; LOAD and BOOT then work at
+    the new rate (the board uses 2 Mbaud; here 8 -> 12 clocks per bit)."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    dut.rxd.value = 1
+    dut.sw.value = 0
+    dut.key_n.value = 0b11
+    dut.rst.value = 1
+    await ClockCycles(dut.clk, 3)
+    dut.rst.value = 0
+    received, rate = [], [8, 12]
+    cocotb.start_soon(uart_monitor(dut, received, rate))
+    while b"ready" not in bytes(received):
+        await ClockCycles(dut.clk, 1000)
+
+    await uart_send(dut, b"BAUD" + struct.pack("<I", 12))
+    while bytes(received).count(b"ready") < 2:
+        await ClockCycles(dut.clk, 1000)
+    assert rate[0] == 12, "no OK for BAUD"
+
+    data = b"LOAD works ok!\r\n"
+    await uart_send(dut, b"LOAD" + struct.pack("<II", 0x40001000, len(data)) + data +
+                    struct.pack("<I", zlib.crc32(data)), divisor=12)
+    while bytes(received).count(b"ready") < 3:
+        await ClockCycles(dut.clk, 1000)
+    image = Path(os.environ["PROGRAM_BIN"]).read_bytes()
+    await uart_send(dut, b"BOOT" + struct.pack("<I", len(image)) + image +
+                    struct.pack("<I", zlib.crc32(image)), divisor=12)
+    for _ in range(1000):
+        await ClockCycles(dut.clk, 1000)
+        if b"DONE\r\n" in bytes(received):
+            break
+    text = bytes(received).decode(errors="replace")
+    for line in text.splitlines():
+        dut._log.info(f"uart: {line}")
+    assert "loaded: LOAD works ok!" in text
+
+
 @pytest.fixture(scope="module")
 def soc_runner():
     return build_soc()
@@ -239,6 +278,20 @@ def test_bootloader_load(soc_runner):
         plusargs=[f"+bootrom={bootrom}"],
         extra_env={"PROGRAM_BIN": str(hexfile.with_suffix(".bin"))},
         results_xml=str(hexfile.with_suffix(".result.xml")),
+    )
+
+
+def test_bootloader_baud(soc_runner):
+    bootrom = build_bootloader()
+    hexfile = build_program(SW / "soc" / "loadcheck.c")
+    soc_runner.test(
+        hdl_toplevel="tb_soc",
+        test_module="test_soc",
+        testcase="baud_switch",
+        test_dir=HERE,
+        plusargs=[f"+bootrom={bootrom}"],
+        extra_env={"PROGRAM_BIN": str(hexfile.with_suffix(".bin"))},
+        results_xml=str(bootrom.with_suffix(".baud.result.xml")),
     )
 
 

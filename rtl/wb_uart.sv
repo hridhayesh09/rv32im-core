@@ -1,14 +1,18 @@
 // UART (8 data bits, no parity, 1 stop bit) as a Wishbone slave.
 //
 //   +0x0 DATA     write: send a byte (ignored unless STATUS.tx_ready)
-//                 read:  the last received byte; reading clears STATUS.rx_valid
-//   +0x4 STATUS   bit 0 tx_ready, bit 1 rx_valid, bit 2 rx_overrun (a byte arrived before the
-//                 previous one was read; cleared by reading DATA)
+//                 read:  the oldest received byte, taken out of the receive FIFO
+//   +0x4 STATUS   bit 0 tx_ready, bit 1 rx_valid (the FIFO isn't empty), bit 2 rx_overrun (a
+//                 byte arrived while the FIFO was full and was lost; cleared by reading DATA)
 //   +0x8 DIVISOR  clock cycles per bit (clock frequency / baud rate), read/write
+//
+// Received bytes wait in a FIFO (RX_DEPTH bytes), so they aren't lost while the CPU is busy for
+// a while (drawing a frame, or a cache miss while a 2 Mbaud upload streams in).
 //
 // Wishbone: single-cycle registered acknowledge (ack the cycle after stb).
 module wb_uart #(
-    parameter logic [15:0] DEFAULT_DIVISOR = 16'd434   // 50 MHz / 115200 baud
+    parameter logic [15:0] DEFAULT_DIVISOR = 16'd434,  // 50 MHz / 115200 baud
+    parameter int          RX_DEPTH        = 64        // power of 2
 ) (
     input  logic        clk,
     input  logic        rst,
@@ -42,8 +46,17 @@ module wb_uart #(
     logic        rx_busy;
     logic [3:0]  rx_bit;      // 0 = start bit, 1..8 = data bits, 9 = stop bit
     logic [15:0] rx_count;
-    logic [7:0]  rx_shift, rx_data;
+    logic [7:0]  rx_shift;
     logic        rx_valid, rx_overrun;
+
+    // Receive FIFO: write pointer, read pointer, one extra bit each to tell full from empty.
+    localparam int RW = $clog2(RX_DEPTH);
+    logic [7:0]  rx_fifo [RX_DEPTH];
+    logic [RW:0] rx_wp, rx_rp;
+    logic        rx_push, rx_full;
+    logic [7:0]  rx_head;
+    assign rx_valid = rx_wp != rx_rp;
+    assign rx_head  = rx_fifo[rx_rp[RW-1:0]];
 
     // ---------------------------------------------------------------- bus access
     logic access, write_data, read_data;
@@ -57,7 +70,8 @@ module wb_uart #(
             tx_bits    <= '0;
             rxd_sync   <= 2'b11;
             rx_busy    <= 1'b0;
-            rx_valid   <= 1'b0;
+            rx_wp      <= '0;
+            rx_rp      <= '0;
             rx_overrun <= 1'b0;
             wb_ack     <= 1'b0;
         end else begin
@@ -66,7 +80,7 @@ module wb_uart #(
             // Register reads.
             if (access && !wb_we) begin
                 case (wb_adr[3:2])
-                    2'd0:    wb_dat_r <= {24'b0, rx_data};
+                    2'd0:    wb_dat_r <= {24'b0, rx_head};
                     2'd1:    wb_dat_r <= {29'b0, rx_overrun, rx_valid, tx_ready};
                     2'd2:    wb_dat_r <= {16'b0, divisor};
                     default: wb_dat_r <= '0;
@@ -95,8 +109,12 @@ module wb_uart #(
             // then sample every `divisor` cycles.
             rxd_sync <= {rxd_sync[0], rxd};
             if (read_data) begin
-                rx_valid   <= 1'b0;
+                if (rx_valid) rx_rp <= rx_rp + 1'b1;
                 rx_overrun <= 1'b0;
+            end
+            if (rx_push) begin
+                if (rx_full) rx_overrun <= 1'b1;
+                else         rx_wp      <= rx_wp + 1'b1;
             end
             if (!rx_busy) begin
                 if (!rx_in) begin
@@ -114,15 +132,18 @@ module wb_uart #(
                 end else if (rx_bit <= 4'd8) begin
                     rx_shift <= {rx_in, rx_shift[7:1]};  // LSB first
                     rx_bit   <= rx_bit + 4'd1;
-                end else begin                           // stop bit
+                end else begin                           // stop bit (rx_push)
                     rx_busy <= 1'b0;
-                    if (rx_in) begin
-                        rx_data    <= rx_shift;
-                        rx_valid   <= 1'b1;
-                        rx_overrun <= rx_valid && !read_data;
-                    end
                 end
             end
         end
+    end
+
+    // A byte is complete when its stop bit is sampled high.
+    assign rx_push = rx_busy && rx_count == '0 && rx_bit > 4'd8 && rx_in;
+    assign rx_full = rx_wp[RW] != rx_rp[RW] && rx_wp[RW-1:0] == rx_rp[RW-1:0];
+
+    always_ff @(posedge clk) begin
+        if (rx_push && !rx_full) rx_fifo[rx_wp[RW-1:0]] <= rx_shift;
     end
 endmodule

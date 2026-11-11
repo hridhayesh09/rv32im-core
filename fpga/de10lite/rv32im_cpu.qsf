@@ -32,6 +32,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_uart.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_timer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_gpio.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/fb_ram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/fb8_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_vga.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/sdram_ctrl.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cache_ram.sv
@@ -221,3 +222,4 @@ set_parameter -name ICACHE_SIZE 4096
 set_parameter -name ICACHE_WAYS 1
 set_parameter -name DCACHE_SIZE 4096
 set_parameter -name DCACHE_WAYS 1
+set_parameter -name VGA8 1

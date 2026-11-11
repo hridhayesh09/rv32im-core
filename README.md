@@ -15,7 +15,8 @@ SystemVerilog, grown into a system-on-chip on the Terasic DE10-Lite (Intel MAX 1
 | 3 | VGA framebuffer, graphics driver, a playable game | **runs on the DE10-Lite**: Snake playable on a real VGA monitor with the board's buttons |
 | 4 | Systolic array accelerator, MNIST software vs accelerator | **runs on the DE10-Lite**: 16x16 NPU, MNIST bit-exact, 38.49x faster than software |
 | 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | done on the board; cost table in progress |
-| stretch | Doom; OpenLane on Sky130 | planned |
+| Doom | doomgeneric with picolibc, 8-bit VGA mode, keyboard over the UART | **runs on the DE10-Lite**: 11.7 fps in Doom's timedemo (playing with the keyboard not tried yet) |
+| 6 | OpenLane on Sky130 | planned |
 
 The full plan for each stage is in [docs/roadmap.md](docs/roadmap.md).
 Plain-English explanations of every part of the design, with interview questions,
@@ -95,6 +96,17 @@ The ideal CPI for this pipeline is 1. The extra cycles come from mispredicted br
 each), load-use stalls (1 cycle) and divides (33 cycles each), which is why `primes`, full of `%`,
 is the slowest. (`python tools/bp_sweep.py`; 1-cycle memory, simulation.)
 
+**Doom on the board** ([board log](docs/results/board_2026-11-11.md#doom), [how it works](docs/notes.md#doom))
+
+Freedoom Phase 1 on the CPU-only build (4 KB caches, everything in SDRAM, 320x200 in 256 colours on
+the VGA monitor). Keys come from the laptop over the serial port (`tools/doom_keys.py`; not yet
+tried on the board).
+
+| Doom's benchmark (`-timedemo demo1`) | Result |
+|---|---|
+| Game tics drawn | 7,117 in 607 s |
+| **Frames per second** | **11.7** (5-second windows: 7.4 to 14.7) |
+
 **CoreMark on the board** (EEMBC CoreMark 1.0, 2K performance run, 2000 iterations, GCC 13.2 -O2;
 [board log](docs/results/board_2026-11-11.md))
 
@@ -114,7 +126,7 @@ is the slowest. (`python tools/bp_sweep.py`; 1-cycle memory, simulation.)
 
 **FPGA build** (Quartus Prime Lite 25.1, DE10-Lite / 10M50, whole SoC: CPU, SDRAM, VGA, 16x16 NPU)
 
-A CPU-only build with 4 KB instruction and data caches (no NPU) uses 13,695 LEs and 122 / 182 M9K and reaches 54.34 MHz.
+A CPU-only build with 4 KB instruction and data caches and the 8-bit VGA mode (no NPU; the Doom build) uses 14,059 LEs and 149 / 182 M9K and reaches 55.11 MHz.
 
 | Logic elements | Memory bits | 9-bit multipliers | Fmax (slow, 85 °C) | Setup slack at 50 MHz |
 |---|---|---|---|---|

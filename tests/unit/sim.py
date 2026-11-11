@@ -8,12 +8,13 @@ ROOT = Path(__file__).resolve().parents[2]
 RTL = ROOT / "rtl"
 
 
-def run(toplevel, rtl_files, test_module, testcase=None, plusargs=()):
+def run(toplevel, rtl_files, test_module, testcase=None, plusargs=(), parameters=None, tag=""):
     runner = get_runner("verilator")
     runner.build(
         sources=[RTL / "rv_pkg.sv"] + [RTL / f for f in rtl_files],
         hdl_toplevel=toplevel,
-        build_dir=ROOT / "build" / toplevel,
+        build_dir=ROOT / "build" / (toplevel + tag),
+        parameters=parameters or {},
         # Verilator lint warnings fail the build. A single module never uses every
         # constant in rv_pkg, so unused-parameter warnings are off for unit builds.
         build_args=["-Wall", "-Wno-UNUSEDPARAM"],

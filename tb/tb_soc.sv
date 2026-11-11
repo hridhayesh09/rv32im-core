@@ -8,7 +8,8 @@ module tb_soc #(
     parameter int BP_MODE      = 2,
     parameter int BTB_BITS     = 5,
     parameter int BHT_BITS     = 8,
-    parameter int RAS_DEPTH    = 4
+    parameter int RAS_DEPTH    = 4,
+    parameter int VGA8         = 0
 ) (
     input  logic        clk,
     input  logic        rst,
@@ -32,7 +33,7 @@ module tb_soc #(
 
     soc #(.UART_DIVISOR(UART_DIVISOR), .ICACHE_SIZE(ICACHE_SIZE), .ICACHE_WAYS(ICACHE_WAYS),
           .DCACHE_SIZE(DCACHE_SIZE), .DCACHE_WAYS(DCACHE_WAYS), .BP_MODE(BP_MODE),
-          .BTB_BITS(BTB_BITS), .BHT_BITS(BHT_BITS), .RAS_DEPTH(RAS_DEPTH)) u_soc (
+          .BTB_BITS(BTB_BITS), .BHT_BITS(BHT_BITS), .RAS_DEPTH(RAS_DEPTH), .VGA8(VGA8 != 0)) u_soc (
         .clk, .rst, .txd, .rxd, .ledr, .sw, .key_n, .hex_n,
         .vga_r, .vga_g, .vga_b, .vga_hs, .vga_vs,
         .sdram_cke(cke), .sdram_cs_n(cs_n), .sdram_ras_n(ras_n), .sdram_cas_n(cas_n),

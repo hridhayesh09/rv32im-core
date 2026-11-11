@@ -72,12 +72,16 @@ async def uart_receive(dut):
         assert await bus.read(0x0) == byte
         assert (await bus.read(0x4)) & 2 == 0, "reading DATA didn't clear rx_valid"
 
-    # Two bytes without reading in between: the first is lost and overrun is flagged.
-    await uart_send_line(dut, 0x11, DIVISOR)
-    await uart_send_line(dut, 0x22, DIVISOR)
+    # Bytes received without reading wait in the 64-byte FIFO, in order; the 65th is lost and
+    # overrun is flagged.
+    sent = [(i * 37 + 5) & 0xFF for i in range(65)]
+    for byte in sent:
+        await uart_send_line(dut, byte, DIVISOR)
     await ClockCycles(dut.clk, DIVISOR)
     assert (await bus.read(0x4)) & 6 == 6, "overrun not flagged"
-    assert await bus.read(0x0) == 0x22
+    got = [await bus.read(0x0) for _ in range(64)]
+    assert got == sent[:64], "FIFO order"
+    assert (await bus.read(0x4)) & 6 == 0, "FIFO not empty, or overrun not cleared"
 
 
 @cocotb.test()

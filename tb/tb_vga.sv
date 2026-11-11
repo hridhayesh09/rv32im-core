@@ -1,5 +1,7 @@
 // The VGA block with the simulated monitor, for its unit tests.
-module tb_vga (
+module tb_vga #(
+    parameter int MODE8 = 0
+) (
     input  logic        clk,
     input  logic        rst,
     input  logic        wb_stb,
@@ -15,7 +17,7 @@ module tb_vga (
     logic [3:0] r, g, b;
     logic       hs, vs;
 
-    wb_vga u_vga (
+    wb_vga #(.MODE8(MODE8 != 0)) u_vga (
         .clk, .rst, .wb_stb, .wb_we, .wb_adr, .wb_dat_w, .wb_sel, .wb_dat_r, .wb_ack,
         .vga_r(r), .vga_g(g), .vga_b(b), .vga_hs(hs), .vga_vs(vs)
     );

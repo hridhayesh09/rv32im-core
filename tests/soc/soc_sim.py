@@ -16,7 +16,7 @@ C_FLAGS = ["-O2", "-ffreestanding", "-fno-builtin", "-Wall", "-Werror"]
 UART_DIVISOR = 8   # clock cycles per bit in simulation (the board uses 434 for 115200 baud)
 
 RTL_SOURCES = ["rv_pkg.sv", "alu.sv", "regfile.sv", "decoder.sv", "muldiv.sv", "csr.sv", "dpram.sv",
-               "bpred.sv", "core.sv", "wb_uart.sv", "wb_timer.sv", "wb_gpio.sv", "fb_ram.sv", "wb_vga.sv",
+               "bpred.sv", "core.sv", "wb_uart.sv", "wb_timer.sv", "wb_gpio.sv", "fb_ram.sv", "fb8_ram.sv", "wb_vga.sv",
                "sdram_ctrl.sv", "cache_ram.sv", "cache.sv", "mem_arbiter.sv", "npu/lint.vlt", "npu/pe.v", "npu/systolic_array.v", "npu/sdp_ram.sv",
                "npu/wb_npu.sv", "soc.sv"]
 TB_SOURCES = ["sdram_model.sv", "vga_capture.sv", "tb_soc.sv"]
@@ -82,22 +82,28 @@ def build_soc(parameters=None, tag=""):
     return runner
 
 
-async def uart_send(dut, data):
+async def uart_send(dut, data, divisor=UART_DIVISOR):
     """Drive bytes into dut.rxd: start bit, 8 data bits LSB first, stop bit."""
     for byte in data:
         for bit in [0] + [(byte >> i) & 1 for i in range(8)] + [1]:
             dut.rxd.value = bit
-            await ClockCycles(dut.clk, UART_DIVISOR)
+            await ClockCycles(dut.clk, divisor)
 
 
-async def uart_monitor(dut, received):
-    """Decode bytes from dut.txd into the list `received`, forever."""
+async def uart_monitor(dut, received, rate=None):
+    """Decode bytes from dut.txd into the list `received`, forever. rate: [clocks per bit] or
+    [clocks per bit, new clocks per bit]: with the second, the monitor switches as soon as it has
+    received "OK" (like the host after the bootloader's BAUD command)."""
+    rate = rate or [UART_DIVISOR]
     while True:
         await FallingEdge(dut.txd)                       # start bit
-        await ClockCycles(dut.clk, UART_DIVISOR // 2)    # middle of the start bit
+        divisor = rate[0]
+        await ClockCycles(dut.clk, divisor // 2)         # middle of the start bit
         value = 0
         for bit in range(8):
-            await ClockCycles(dut.clk, UART_DIVISOR)
+            await ClockCycles(dut.clk, divisor)
             value |= int(dut.txd.value) << bit
-        await ClockCycles(dut.clk, UART_DIVISOR)         # stop bit
+        await ClockCycles(dut.clk, divisor)              # stop bit
         received.append(value)
+        if len(rate) > 1 and rate[1] and bytes(received).endswith(b"OK\r\n"):
+            rate[0], rate[1] = rate[1], None

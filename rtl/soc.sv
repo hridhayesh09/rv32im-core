@@ -28,7 +28,8 @@ module soc #(
     parameter int          BP_MODE      = 2,              // branch predictor (see core.sv)
     parameter int          BTB_BITS     = 5,
     parameter int          BHT_BITS     = 8,
-    parameter int          RAS_DEPTH    = 4
+    parameter int          RAS_DEPTH    = 4,
+    parameter bit          VGA8         = 1'b0            // VGA mode: 0 = 320x240x4, 1 = 320x200x8
 ) (
     input  logic        clk,
     input  logic        rst,
@@ -310,7 +311,7 @@ module soc #(
         .ledr, .sw, .key_n, .hex_n
     );
 
-    wb_vga u_vga (
+    wb_vga #(.MODE8(VGA8)) u_vga (
         .clk, .rst,
         .wb_stb   (bus_stb && slave == SLAVE_VGA),
         .wb_we    (bus_we),
