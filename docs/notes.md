@@ -1138,3 +1138,80 @@ The read happens in one stage while older instructions are still in later stages
 (like a load's memory wait in WB) can land after the read. The ISA only defines `minstret`
 exactly, and this core compensates for it; the event counters are good for blocks of code, not
 single instructions.
+
+## Stage 5, steps 3-5: caches
+
+### Why caches
+SDRAM is big but slow: a word costs about 11-14 cycles; on-chip RAM costs 1. A **cache** is a small,
+fast memory that keeps copies of recently used memory, so most accesses don't go to SDRAM. Programs
+reuse the same code and data a lot (loops, the stack, nearby variables: *locality*), so a small cache
+catches most accesses.
+
+### How this cache works (`rtl/cache.sv`)
+- **Lines:** memory is moved in 16-byte lines (4 words), because after one word a program usually
+  wants its neighbours. The SDRAM controller streams a line as 4 back-to-back bursts in the same row
+  (`rtl/sdram_ctrl.sv`, line port).
+- **Address split:** `[tag | index | offset]`. The offset (4 bits) picks the byte in the line, the
+  index picks the set, and the tag (stored with the line) says which memory line is there.
+- **Direct-mapped vs 2-way:** direct-mapped has one place per index, so two hot lines with the same
+  index keep evicting each other (*conflict misses*). 2-way has two places per index and replaces the
+  **least recently used** of the two (one LRU bit per set).
+- **Valid, dirty, LRU bits in flip-flops; tags and data in block RAM.** Flip-flops so a flush can
+  clear them all in one cycle; block RAM because that's where the bulk belongs.
+- **Same timing as the block RAM it replaces:** a request reads tags and data; the next cycle compares
+  the tags. A hit returns data that cycle, so a cache hit costs the same as on-chip RAM.
+- **A miss freezes the pipeline** (the freeze from Stage 2, step 1) while the cache writes the victim
+  back if it's dirty, reads the new line, and replays the lookup.
+
+### Write-back, write-allocate (the data cache)
+- **Write-through** would send every store to memory immediately: simple, but each store would cost
+  an SDRAM write (~11 cycles).
+- **Write-back** (chosen) only updates the cache and marks the line **dirty**; the line is written to
+  memory once, when it's evicted. Many stores to the same line cost one line write.
+- **Write-allocate:** a store that misses first brings the line in, then writes into it (so the next
+  stores to that line hit).
+- **The catch:** memory can be out of date. Anything that reads memory directly (the instruction
+  fetch after code was written as data) must first make the cache write its dirty lines back.
+
+### Two subtle cases (both found while writing it, and covered by tests)
+- **A store and the access right after it:** a store hit writes the RAM in its compare cycle, but the
+  next access read the RAM in that same cycle, before the write landed. The just-written bytes are
+  forwarded to it, both to its load data and to the victim data if it evicts that very line. Turning
+  forwarding off made 6 test runs fail.
+- **FENCE.I:** the data cache writes back every dirty line, the instruction cache invalidates every
+  line, and the core stays frozen until both are done; a request that was waiting is replayed.
+
+### Verification
+Every lockstep test runs a second time with the whole program reached only through the caches
+(`tb/tb_cached.sv`: core, I-cache, D-cache, an arbiter for the shared memory port, and a slow memory
+with random latency). The caches are tiny on purpose (256 bytes, direct-mapped and 2-way), so lines
+are evicted and dirty lines written back constantly: all directed programs, all 50 riscv-tests, the
+C programs and 10 random programs, in both configurations, 142 runs, every retired instruction
+matching Spike. Planted bugs: no write-back of dirty lines (3 runs fail), no store forwarding (6 runs
+fail).
+
+### Interview questions
+
+**Write-back or write-through, and why?**
+Write-back: stores only update the cache; a dirty line is written to memory once, when evicted.
+With SDRAM writes costing ~11 cycles each, write-through would turn every store into a memory write.
+The cost is complexity (dirty bits, write-back on eviction, flushing before memory is read elsewhere).
+
+**What are the three kinds of cache misses?**
+Compulsory (first access to a line), capacity (the working set doesn't fit), conflict (lines that map
+to the same set evict each other even though the cache has room). Associativity reduces conflict
+misses; size reduces capacity misses.
+
+**How does your cache keep the same hit timing as plain block RAM?**
+Tags and data are read in the same cycle the request goes in, and compared the next cycle, exactly
+when plain block RAM would deliver its data. Only a miss costs extra cycles.
+
+**What's the hazard between a store and a following load in your cache, and the fix?**
+The store writes the data RAM in its compare cycle; the next request reads the RAM in that same
+cycle and gets the old bytes. The store's bytes are kept in a small register and merged into that
+request's data (forwarding), including into a victim line being written back.
+
+**What does FENCE.I have to do with caches?**
+Code written as data sits in the data cache (dirty); instruction fetch reads through the instruction
+cache, which may hold the old code. FENCE.I writes back the data cache and invalidates the
+instruction cache, so fetch sees the new code.

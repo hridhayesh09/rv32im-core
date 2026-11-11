@@ -27,6 +27,8 @@ module core
     output logic        imem_en,
     output logic [31:0] imem_addr,
     input  logic [31:0] imem_rdata,
+    input  logic        imem_stall,     // the instruction for ID isn't there yet (I-cache miss)
+    output logic        fetch_valid,    // the instruction for ID is still wanted (not flushed)
 
     output logic        dmem_en,
     output logic [3:0]  dmem_we,
@@ -34,6 +36,7 @@ module core
     output logic [31:0] dmem_wdata,
     input  logic [31:0] dmem_rdata,
     input  logic        dmem_stall,     // the access of the instruction in WB isn't done yet
+    output logic        cache_flush,    // FENCE.I: write back the D-cache, invalidate the I-cache
     input  logic [3:0]  mem_events,     // from the memory system, counted by mhpmcounter8-11:
                                         // I-cache access, I-cache miss, D-cache access, D-cache miss
 
@@ -120,8 +123,9 @@ module core
     logic        redirect;      // EX: taken branch or jump
     logic [31:0] redirect_pc;
     logic        stall_f, stall_d, stall_e, flush_d, flush_e, load_use;
-    logic        freeze;        // everything holds: WB is waiting for a slow data access
-    assign freeze = dmem_stall;
+    logic        freeze;        // everything holds: waiting for memory (a data access in WB,
+                                // or the instruction for ID)
+    assign freeze = dmem_stall || imem_stall;
 
     // ---------------------------------------------------------------- IF
 
@@ -138,6 +142,7 @@ module core
     // so it is frozen (en = 0) whenever ID is stalled.
     assign imem_addr = pc_f;
     assign imem_en   = !stall_d && !freeze;
+    assign fetch_valid = d.valid;
 
     always_ff @(posedge clk) begin
         if (rst)            d.valid <= 1'b0;
@@ -373,6 +378,7 @@ module core
     // FENCE.I redirects to the next instruction: the 2 younger instructions, fetched before an
     // older store to code finished, are flushed and fetched again.
     assign redirect    = e.valid && (exception || e.mret || jump_e || e.fence_i);
+    assign cache_flush = ex_fire && e.fence_i && !exception;
     assign redirect_pc = exception ? mtvec : e.mret ? mepc : e.fence_i ? e.pc + 32'd4 : target_e;
 
     always_ff @(posedge clk) begin

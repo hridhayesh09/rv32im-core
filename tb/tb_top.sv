@@ -18,7 +18,13 @@ module tb_top (
 );
     logic        imem_en, dmem_en, dmem_stall;
     logic [3:0]  mem_events;
+    logic        imem_stall, fetch_valid, cache_flush;
     assign mem_events = 4'b0000;   // no caches here
+    assign imem_stall = 1'b0;
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic unused_core_outputs;
+    assign unused_core_outputs = fetch_valid ^ cache_flush;
+    /* verilator lint_on UNUSEDSIGNAL */
     logic [3:0]  dmem_we;
     logic [31:0] imem_addr, imem_rdata, dmem_addr, dmem_wdata, dmem_rdata;
 

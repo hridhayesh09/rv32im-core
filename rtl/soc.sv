@@ -57,6 +57,7 @@ module soc #(
     core #(.RESET_PC(32'h0000_0000)) u_core (
         .clk, .rst,
         .imem_en, .imem_addr, .imem_rdata,
+        .imem_stall (1'b0), .fetch_valid (), .cache_flush (),   // no caches yet
         .dmem_en, .dmem_we, .dmem_addr, .dmem_wdata, .dmem_rdata, .dmem_stall,
         .mem_events (4'b0000),   // no caches yet
         .rvfi_valid(), .rvfi_pc(), .rvfi_insn(), .rvfi_rd(), .rvfi_rd_wdata(),
