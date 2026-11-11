@@ -1,8 +1,9 @@
 // 5-stage in-order RV32IM pipeline: IF -> ID -> EX -> MEM -> WB.
 //
 // - Both memories have a synchronous read (like FPGA block RAM). IF sends the PC to the
-//   instruction memory and the instruction arrives in ID; MEM sends the address to the data
-//   memory and the loaded data arrives in WB.
+//   instruction memory and the instruction arrives in ID. EX sends a load or store to the data
+//   memory (the address straight from the ALU); the data arrives in MEM, where it's aligned and
+//   registered, so WB only ever forwards registered values.
 // - Branches and jumps are resolved in EX. The core always fetches PC+4 next ("predict not
 //   taken"); when EX finds a taken branch or a jump, the two younger instructions in IF and ID
 //   are flushed and fetch restarts at the target.
@@ -11,8 +12,8 @@
 //   and nothing downstream acts on it.
 // - The rvfi_* outputs describe each instruction as it retires from WB; the testbench compares
 //   them against Spike.
-// - Data accesses may take extra cycles (bus devices, SDRAM). While the instruction in WB is
-//   still waiting for its data (dmem_stall), the whole pipeline freezes.
+// - Data accesses may take extra cycles (bus devices, caches, SDRAM). While the instruction in MEM
+//   is still waiting for its data (dmem_stall), the whole pipeline freezes.
 // - Exceptions (illegal instruction, ECALL, EBREAK, misaligned load/store/jump) are taken in EX:
 //   the instruction becomes a bubble, the younger ones are flushed, and fetch restarts at mtvec.
 //   Older instructions (in MEM and WB) finish normally, so exceptions are precise.
@@ -35,7 +36,7 @@ module core
     output logic [31:0] dmem_addr,
     output logic [31:0] dmem_wdata,
     input  logic [31:0] dmem_rdata,
-    input  logic        dmem_stall,     // the access of the instruction in WB isn't done yet
+    input  logic        dmem_stall,     // the access of the instruction in MEM isn't done yet
     output logic        cache_flush,    // FENCE.I: write back the D-cache, invalidate the I-cache
     input  logic [3:0]  mem_events,     // from the memory system, counted by mhpmcounter8-11:
                                         // I-cache access, I-cache miss, D-cache access, D-cache miss
@@ -92,24 +93,24 @@ module core
         logic        valid;
         logic [31:0] pc;
         logic [31:0] instr;
-        logic [31:0] result;      // ALU result or PC+4; the address for loads and stores
-        logic [31:0] store_data;
+        logic [31:0] result;      // ALU result, PC+4, CSR or mul/div; the address for loads/stores
         logic [4:0]  rd;
         logic [2:0]  funct3;
         logic        reg_write;
         logic        mem_read;
-        logic        mem_write;
+        logic [3:0]  mem_wmask;   // for the retire trace: bytes stored
+        logic [31:0] mem_wdata;   //   and the value, at the store's width
     } ex_mem_t;
 
     typedef struct packed {
         logic        valid;
         logic [31:0] pc;
         logic [31:0] instr;
-        logic [31:0] result;
+        logic [31:0] result;      // the value to write back (loads: the loaded value)
         logic [4:0]  rd;
-        logic [2:0]  funct3;
         logic        reg_write;
         logic        mem_read;
+        logic [31:0] mem_addr;
         logic [3:0]  mem_wmask;
         logic [31:0] mem_wdata;
     } mem_wb_t;
@@ -123,7 +124,7 @@ module core
     logic        redirect;      // EX: taken branch or jump
     logic [31:0] redirect_pc;
     logic        stall_f, stall_d, stall_e, flush_d, flush_e, load_use;
-    logic        freeze;        // everything holds: waiting for memory (a data access in WB,
+    logic        freeze;        // everything holds: waiting for memory (a data access in MEM,
                                 // or the instruction for ID)
     assign freeze = dmem_stall || imem_stall;
 
@@ -381,6 +382,41 @@ module core
     assign cache_flush = ex_fire && e.fence_i && !exception;
     assign redirect_pc = exception ? mtvec : e.mret ? mepc : e.fence_i ? e.pc + 32'd4 : target_e;
 
+    // ---- data memory request (sent from EX; the data comes back while the instruction is in MEM)
+    // Stores: line the data up with the addressed byte lanes. Byte stores repeat the byte in
+    // every lane and halfword stores repeat the halfword; the write mask picks the lanes.
+    logic [3:0]  store_mask;
+    logic [31:0] store_wdata, store_value;
+
+    always_comb begin
+        case (e.funct3[1:0])
+            2'b00: begin
+                store_mask  = 4'b0001 << alu_y[1:0];
+                store_wdata = {4{rs2_e[7:0]}};
+                store_value = {24'b0, rs2_e[7:0]};
+            end
+            2'b01: begin
+                store_mask  = 4'b0011 << alu_y[1:0];
+                store_wdata = {2{rs2_e[15:0]}};
+                store_value = {16'b0, rs2_e[15:0]};
+            end
+            default: begin
+                store_mask  = 4'b1111;
+                store_wdata = rs2_e;
+                store_value = rs2_e;
+            end
+        endcase
+    end
+
+    // A request goes out only in the cycle the instruction leaves EX (not while frozen), so a
+    // store is never issued twice, and never for an instruction that traps.
+    logic mem_fire;
+    assign mem_fire   = ex_fire && !exception && (e.mem_read || e.mem_write);
+    assign dmem_en    = mem_fire;
+    assign dmem_addr  = alu_y;
+    assign dmem_we    = (mem_fire && e.mem_write) ? store_mask : 4'b0000;
+    assign dmem_wdata = store_wdata;
+
     always_ff @(posedge clk) begin
         if (rst) begin
             m.valid <= 1'b0;
@@ -395,74 +431,17 @@ module core
                 instr:      e.instr,
                 result:     e.is_muldiv ? md_result : e.is_csr ? csr_rdata :
                             (e.wb_sel == WB_PC4) ? e.pc + 32'd4 : alu_y,
-                store_data: rs2_e,
                 rd:         e.rd,
                 funct3:     e.funct3,
                 reg_write:  e.reg_write,
                 mem_read:   e.mem_read,
-                mem_write:  e.mem_write
+                mem_wmask:  e.mem_write ? store_mask : 4'b0000,
+                mem_wdata:  e.mem_write ? store_value : '0
             };
         end
     end
 
     // ---------------------------------------------------------------- MEM
-
-    // Stores: line the data up with the addressed byte lanes. Byte stores repeat the byte in
-    // every lane and halfword stores repeat the halfword; the write mask picks the lanes.
-    logic [3:0]  store_mask;
-    logic [31:0] store_wdata, store_value;
-
-    always_comb begin
-        case (m.funct3[1:0])
-            2'b00: begin
-                store_mask  = 4'b0001 << m.result[1:0];
-                store_wdata = {4{m.store_data[7:0]}};
-                store_value = {24'b0, m.store_data[7:0]};
-            end
-            2'b01: begin
-                store_mask  = 4'b0011 << m.result[1:0];
-                store_wdata = {2{m.store_data[15:0]}};
-                store_value = {16'b0, m.store_data[15:0]};
-            end
-            default: begin
-                store_mask  = 4'b1111;
-                store_wdata = m.store_data;
-                store_value = m.store_data;
-            end
-        endcase
-    end
-
-    logic store_m;
-    assign store_m    = m.valid && m.mem_write;
-    assign dmem_addr  = m.result;
-    // A request is only sent in the cycle the instruction leaves MEM (not while frozen), so a
-    // store is never issued twice.
-    assign dmem_en    = m.valid && (m.mem_read || m.mem_write) && !freeze;
-    assign dmem_we    = (store_m && !freeze) ? store_mask : 4'b0000;
-    assign dmem_wdata = store_wdata;
-
-    always_ff @(posedge clk) begin
-        if (rst) begin
-            w.valid <= 1'b0;
-        end else if (freeze) begin
-            // hold
-        end else begin
-            w <= '{
-                valid:     m.valid,
-                pc:        m.pc,
-                instr:     m.instr,
-                result:    m.result,
-                rd:        m.rd,
-                funct3:    m.funct3,
-                reg_write: m.reg_write,
-                mem_read:  m.mem_read,
-                mem_wmask: store_m ? store_mask : 4'b0000,
-                mem_wdata: store_m ? store_value : '0
-            };
-        end
-    end
-
-    // ---------------------------------------------------------------- WB
 
     // Loads: pick the addressed byte/halfword out of the word and sign- or zero-extend it.
     function automatic logic [31:0] load_extend(input logic [2:0] f3, input logic [1:0] offset,
@@ -478,13 +457,41 @@ module core
         endcase
     endfunction
 
-    assign wb_data = w.mem_read ? load_extend(w.funct3, w.result[1:0], dmem_rdata) : w.result;
+    // The data for a load sent from EX last cycle arrives now (once dmem_stall is low).
+    logic [31:0] mem_result;
+    assign mem_result = m.mem_read ? load_extend(m.funct3, m.result[1:0], dmem_rdata) : m.result;
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            w.valid <= 1'b0;
+        end else if (freeze) begin
+            // hold
+        end else begin
+            w <= '{
+                valid:     m.valid,
+                pc:        m.pc,
+                instr:     m.instr,
+                result:    mem_result,
+                rd:        m.rd,
+                reg_write: m.reg_write,
+                mem_read:  m.mem_read,
+                mem_addr:  m.result,
+                mem_wmask: m.mem_wmask,
+                mem_wdata: m.mem_wdata
+            };
+        end
+    end
+
+    // ---------------------------------------------------------------- WB
+
+    assign wb_data = w.result;   // a register: loads were aligned in MEM
     assign wb_we   = w.valid && w.reg_write && !freeze;
 
     // ---------------------------------------------------------------- hazard control
 
     // Load-use: the instruction in ID needs the result of a load that is in EX. The data only
-    // arrives when the load is in WB, so hold IF and ID for one cycle and put a bubble into EX.
+    // arrives (late) in MEM and is usable from WB, so hold IF and ID for one cycle and put a
+    // bubble into EX.
     // After that cycle the load is in MEM; when the consumer then moves into EX, the load is in
     // WB and forwarding supplies the value.
     assign load_use = e.valid && e.mem_read && e.reg_write && d.valid &&
@@ -504,7 +511,7 @@ module core
     assign rvfi_rd_wdata  = wb_we ? wb_data : '0;
     assign rvfi_mem_read  = w.valid && w.mem_read;
     assign rvfi_mem_wmask = w.valid ? w.mem_wmask : 4'b0000;
-    assign rvfi_mem_addr  = w.result;
+    assign rvfi_mem_addr  = w.mem_addr;
     assign rvfi_mem_wdata = w.mem_wdata;
 
 endmodule

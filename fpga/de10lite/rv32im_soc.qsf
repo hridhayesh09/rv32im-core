@@ -31,6 +31,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_gpio.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/fb_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/wb_vga.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/sdram_ctrl.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cache_ram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cache.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/mem_arbiter.sv
 set_global_assignment -name VERILOG_FILE ../../rtl/npu/pe.v
 set_global_assignment -name VERILOG_FILE ../../rtl/npu/systolic_array.v
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/npu/sdp_ram.sv

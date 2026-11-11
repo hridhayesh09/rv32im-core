@@ -54,6 +54,10 @@ module csr (
     logic [63:0] mcycle, minstret;
     logic [63:0] hpm [NUM_HPM];
 
+    // Events are registered before they're counted, so the 64-bit increment isn't on the path from
+    // the event's source (deep in EX). A read adds the registered event, so the count stays exact.
+    logic [NUM_HPM-1:0] events_q;
+
     // Which event counter (if any) an address names: 0xB03.. / 0xB83.. / 0xC03.. / 0xC83..
     logic        hpm_sel, hpm_high, hpm_event_sel;
     logic [3:0]  hpm_idx;
@@ -72,9 +76,11 @@ module csr (
     assign mstatus = {19'b0, 2'b11, 3'b0, mpie, 3'b0, mie_bit, 3'b0};
 
     // ---------------------------------------------------------------- read
-    logic known;
+    logic        known;
+    logic [63:0] hpm_now;
     always_comb begin
-        known = 1'b1;
+        known   = 1'b1;
+        hpm_now = '0;
         case (addr)
             12'h300: rdata = mstatus;
             12'h301: rdata = 32'h4000_1100;          // MXL = 32 bits, I and M
@@ -92,7 +98,10 @@ module csr (
             12'hB82, 12'hC82: rdata = instret_now[63:32];
             12'hF11, 12'hF12, 12'hF13, 12'hF14, 12'hF15: rdata = '0;
             default: begin
-                if (hpm_sel)             rdata = hpm_high ? hpm[hpm_idx][63:32] : hpm[hpm_idx][31:0];
+                if (hpm_sel) begin
+                    hpm_now = hpm[hpm_idx] + {63'b0, events_q[hpm_idx]};
+                    rdata   = hpm_high ? hpm_now[63:32] : hpm_now[31:0];
+                end
                 else if (hpm_event_sel)  rdata = '0;
                 else begin
                     rdata = '0;
@@ -130,10 +139,12 @@ module csr (
             mcycle   <= '0;
             minstret <= '0;
             for (int i = 0; i < NUM_HPM; i++) hpm[i] <= '0;
+            events_q <= '0;
         end else begin
+            events_q <= events;
             mcycle   <= mcycle + 64'd1;
             minstret <= minstret + {63'b0, retire};
-            for (int i = 0; i < NUM_HPM; i++) hpm[i] <= hpm[i] + {63'b0, events[i]};
+            for (int i = 0; i < NUM_HPM; i++) hpm[i] <= hpm[i] + {63'b0, events_q[i]};
 
             if (trap) begin
                 mepc    <= {trap_pc[31:2], 2'b00};

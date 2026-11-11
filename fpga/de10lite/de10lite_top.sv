@@ -8,7 +8,16 @@
 //   SDRAM      DRAM_CLK is the inverted system clock, so the chip samples each command half a
 //              cycle after the controller sends it. Read data is then sampled 60 ns after READ;
 //              on this board (edge-ml-accelerator/boardtest) reads were clean from 50 to 70 ns.
-module de10lite_top (
+// Build configurations (set per Quartus revision, see rv32im_soc.qsf / rv32im_cpu.qsf):
+//   full SoC: NPU, no caches (meets timing with the NPU)
+//   CPU-only: no NPU, instruction and data caches (programs can run from SDRAM)
+module de10lite_top #(
+    parameter bit NPU         = 1'b1,
+    parameter int ICACHE_SIZE = 0,
+    parameter int ICACHE_WAYS = 1,
+    parameter int DCACHE_SIZE = 0,
+    parameter int DCACHE_WAYS = 1
+) (
     input  logic        MAX10_CLK1_50,
     input  logic [1:0]  KEY,
     input  logic [9:0]  SW,
@@ -60,7 +69,12 @@ module de10lite_top (
     soc #(
         .CLK_HZ       (32'd50_000_000),
         .UART_DIVISOR (434),                         // 115200 baud
-        .BOOTROM_FILE ("../../build/sw/bootrom.mif") // from `make sw`
+        .BOOTROM_FILE ("../../build/sw/bootrom.mif"), // from `make sw`  
+        .NPU          (NPU),
+        .ICACHE_SIZE  (ICACHE_SIZE),
+        .ICACHE_WAYS  (ICACHE_WAYS),
+        .DCACHE_SIZE  (DCACHE_SIZE),
+        .DCACHE_WAYS  (DCACHE_WAYS)
     ) u_soc (
         .clk, .rst,
         .txd,

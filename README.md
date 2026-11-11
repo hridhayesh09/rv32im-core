@@ -103,9 +103,11 @@ the slowest.
 
 **FPGA build** (Quartus Prime Lite 25.1, DE10-Lite / 10M50, whole SoC: CPU, SDRAM, VGA, 16x16 NPU)
 
+A CPU-only build with 4 KB instruction and data caches (no NPU) uses 11,961 LEs and 120 / 182 M9K and reaches 55.63 MHz.
+
 | Logic elements | Memory bits | 9-bit multipliers | Fmax (slow, 85 °C) | Setup slack at 50 MHz |
 |---|---|---|---|---|
-| 31,762 (64 %) | 1,162,824 (69 %), 165 / 182 M9K | 136 (47 %) | 55.88 MHz | +2.103 ns |
+| 34,022 (68 %) | 1,162,824 (69 %), 165 / 182 M9K | 136 (47 %) | 56.76 MHz | +2.381 ns |
 
 **Snake on the CPU** (frame captured from the simulated VGA monitor; [how it's tested](docs/notes.md#stage-3-graphics))
 

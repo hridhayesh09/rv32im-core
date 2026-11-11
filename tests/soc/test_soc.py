@@ -71,6 +71,16 @@ async def perf(dut):
 
 
 @cocotb.test()
+async def cached_program(dut):
+    """A program running from SDRAM: every instruction and data access goes through the caches."""
+    text = await run_until_done(dut, 6_000_000)
+    assert "running from 0x4000" in text
+    assert "CACHE PASS\r\n" in text
+    misses = {name: int(text.split(f"{name} accesses ")[1].split()[2]) for name in ("icache", "dcache")}
+    assert misses["icache"] > 0 and misses["dcache"] > 0, "the caches were never missed"
+
+
+@cocotb.test()
 async def sdram(dut):
     text = await run_until_done(dut, 2_000_000)
     assert "SDRAM PASS\r\n" in text
@@ -118,7 +128,7 @@ async def bootloader(dut):
 
 
 @cocotb.test()
-async def bootloader_load(dut):
+async def load_command(dut):
     """LOAD 16 bytes into SDRAM, then BOOT a program that prints them back."""
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
     dut.rxd.value = 1
@@ -191,9 +201,22 @@ def test_bootloader_load(soc_runner):
     soc_runner.test(
         hdl_toplevel="tb_soc",
         test_module="test_soc",
-        testcase="bootloader_load",
+        testcase="load_command",
         test_dir=HERE,
         plusargs=[f"+bootrom={bootrom}"],
         extra_env={"PROGRAM_BIN": str(hexfile.with_suffix(".bin"))},
         results_xml=str(hexfile.with_suffix(".result.xml")),
+    )
+
+
+def test_from_sdram(soc_runner):
+    bootrom = build_bootrom(SW / "boot" / "jump_to_sdram.S")
+    program = build_program(SW / "soc" / "cache_test.c", name="soc-cache_test-sdram", sdram=True)
+    soc_runner.test(
+        hdl_toplevel="tb_soc",
+        test_module="test_soc",
+        testcase="cached_program",
+        test_dir=HERE,
+        plusargs=[f"+bootrom={bootrom}", f"+sdram_init={program}"],
+        results_xml=str(program.with_suffix(".result.xml")),
     )

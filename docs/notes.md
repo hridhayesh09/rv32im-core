@@ -1215,3 +1215,47 @@ request's data (forwarding), including into a victim line being written back.
 Code written as data sits in the data cache (dirty); instruction fetch reads through the instruction
 cache, which may hold the old code. FENCE.I writes back the data cache and invalidates the
 instruction cache, so fetch sees the new code.
+
+## Stage 5: moving the memory access one stage earlier (timing fix)
+
+### The problem
+With 4 KB caches in, the CPU-only FPGA build only reached 46.91 MHz (it needs 50). Quartus showed
+the slowest path: the cache's block RAM put out the loaded word, then (in the same clock cycle) it
+went through the SoC's "which memory answered" mux, the cache's store-forwarding merge, the byte
+picking and sign extension for LB/LH, the write-back mux, the forwarding mux in front of the ALU,
+and the ALU itself. Too much logic in one cycle.
+
+### The fix
+Before: MEM sent the address to memory, and the data arrived in WB, raw. WB had to align it and
+then forward it straight into the ALU of the next instruction.
+
+After: EX sends the address (straight out of the ALU) to memory. The data arrives while the load is
+in MEM; MEM aligns and sign-extends it and stores it in the MEM/WB register. WB now only ever
+forwards a value that comes straight out of a flip-flop, so the long chain is cut in two.
+
+The memory side didn't change at all: it still gets "a request, then the answer next cycle", so the
+caches, the bus and the test benches work as before. The load-use stall is still one cycle.
+A request is only sent in the cycle the instruction actually leaves EX (not frozen, not trapping),
+so a store can never be written twice or written by an instruction that traps.
+
+### Result (Quartus, slow 85C model)
+| Build | Before | After |
+|---|---|---|
+| CPU-only, 4 KB I$ + 4 KB D$ | 46.91 MHz (-1.316 ns) | 55.63 MHz (+2.025 ns), 11,961 LEs, 120/182 M9K |
+| Full SoC with NPU, no caches | 55.88 MHz | 56.76 MHz (+2.381 ns), 34,022 LEs, 165/182 M9K |
+
+All 315 simulation tests pass, including the 142 lockstep runs through the caches.
+
+### Interview questions
+
+**Your design missed timing. How did you find and fix the problem?**
+I read the worst path from the timing report: it started at the cache RAM output and ended at the
+EX-stage registers, going through about seven blocks of logic. The fix was architectural, not a
+tweak: send the memory request one stage earlier so the loaded value is registered before it gets
+forwarded. Then I reran every test and recompiled.
+
+**Didn't moving the access change the pipeline's behaviour?**
+Not visible to software: the same instructions retire with the same results (lockstep with Spike
+checks every one). The interface to memory is the same request/response handshake, one stage earlier.
+The address now comes straight from the ALU, which is a new path (ALU to RAM address), but it is much
+shorter than the old one.
