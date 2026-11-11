@@ -1,7 +1,8 @@
 """Pack the int8 MNIST model, test images and NumPy reference answers into one blob for SDRAM
 (0x4000_0000), which sw/soc/mnist.c reads.
 
-    python3 tools/export_mnist.py [n_images]      -> build/mnist/mnist_blob.bin and .hex
+    python3 tools/export_mnist.py [n_images [name]]   -> build/mnist/<name>.bin and .hex
+                                                      (default: 200 images, mnist_blob)
 
 Blob layout (byte offsets in the header; every section starts on a 64-byte boundary):
   header   16 words: magic "MNST", n_images, then offsets of the sections below
@@ -79,13 +80,14 @@ def build_blob(n_images):
 
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 200
+    name = sys.argv[2] if len(sys.argv) > 2 else "mnist_blob"
     blob, logits, labels = build_blob(n)
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "mnist_blob.bin").write_bytes(blob)
+    (OUT / f"{name}.bin").write_bytes(blob)
     words = np.frombuffer(blob + bytes(-len(blob) % 4), dtype="<u4")
-    (OUT / "mnist_blob.hex").write_text("".join(f"{w:08x}\n" for w in words))
+    (OUT / f"{name}.hex").write_text("".join(f"{w:08x}\n" for w in words))
     accuracy = (logits.argmax(axis=1) == labels).mean()
-    print(f"{OUT / 'mnist_blob.bin'}: {n} images, {len(blob)} bytes; "
+    print(f"{OUT / (name + '.bin')}: {n} images, {len(blob)} bytes; "
           f"reference accuracy on these images {accuracy:.2%}")
 
 

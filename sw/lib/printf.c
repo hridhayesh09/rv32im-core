@@ -1,4 +1,5 @@
-// A small printf for the UART: %c %s %d %u %x %X %p %%, with an optional 0 flag and width.
+// A small printf for the UART: %c %s %d %u %x %X %p %%, with an optional 0 flag and width
+// (and an ignored l, as in %lu).
 #include <stdarg.h>
 #include "soc.h"
 
@@ -48,6 +49,8 @@ int printf(const char *fmt, ...)
         }
         while (*fmt >= '0' && *fmt <= '9')
             width = width * 10 + (*fmt++ - '0');
+        while (*fmt == 'l')   // %ld, %lu, %lx: long is 32 bits here, same as int
+            fmt++;
         switch (*fmt) {
         case 'c':
             uart_putc((char)va_arg(args, int));

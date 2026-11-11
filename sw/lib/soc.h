@@ -6,6 +6,12 @@
 
 #define REG(addr) (*(volatile uint32_t *)(addr))
 
+// SDRAM (64 MB): through the caches when the SoC has them, or the same memory never cached.
+#ifndef SDRAM_BASE
+#define SDRAM_BASE     0x40000000u
+#endif
+#define SDRAM_UNCACHED 0x50000000u
+
 // UART
 #define UART_BASE      0x10000000u
 #define UART_DATA      REG(UART_BASE + 0x0)

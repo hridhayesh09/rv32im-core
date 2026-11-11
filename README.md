@@ -14,7 +14,7 @@ SystemVerilog, grown into a system-on-chip on the Terasic DE10-Lite (Intel MAX 1
 | 2 | SoC: Wishbone bus, boot ROM, SDRAM, UART, timer, GPIO, UART bootloader | **runs on the DE10-Lite**: bootloader, hello, 64 MB SDRAM test ([board log](docs/results/board_2026-11-07.md)) |
 | 3 | VGA framebuffer, graphics driver, a playable game | **runs on the DE10-Lite**: Snake playable on a real VGA monitor with the board's buttons |
 | 4 | Systolic array accelerator, MNIST software vs accelerator | **runs on the DE10-Lite**: 16x16 NPU, MNIST bit-exact, 38.49x faster than software |
-| 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | caches and predictor done, CoreMark next |
+| 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | done on the board; cost table in progress |
 | stretch | Doom; OpenLane on Sky130 | planned |
 
 The full plan for each stage is in [docs/roadmap.md](docs/roadmap.md).
@@ -95,23 +95,30 @@ The ideal CPI for this pipeline is 1. The extra cycles come from mispredicted br
 each), load-use stalls (1 cycle) and divides (33 cycles each), which is why `primes`, full of `%`,
 is the slowest. (`python tools/bp_sweep.py`; 1-cycle memory, simulation.)
 
-**MNIST on the board** (784 → 64 → 10, int8; [board log](docs/results/board_2026-11-07.md))
+**CoreMark on the board** (EEMBC CoreMark 1.0, 2K performance run, 2000 iterations, GCC 13.2 -O2;
+[board log](docs/results/board_2026-11-11.md))
+
+| Build | Program in | CoreMark/MHz | CoreMark at 50 MHz | CPI |
+|---|---|---|---|---|
+| Full SoC or CPU-only | on-chip RAM | **2.699** | 134.9 | 1.177 |
+| CPU-only, 4 KB I$ + 4 KB D$ | SDRAM through the caches | **2.661** | 133.0 | 1.194 |
+
+**MNIST on the board** (784 → 64 → 10, int8; [board log](docs/results/board_2026-11-11.md))
 
 | | Images | Correct | Cycles per image | Time per image at 50 MHz |
 |---|---|---|---|---|
-| CPU only (software) | 10 | 10 | 856,963 | 17.1 ms |
-| CPU + 16x16 NPU | 200 | 199 (99.5 %) | 22,263 | 445 us |
+| CPU only (software) | 10 | 10 | 847,536 | 17.0 ms |
+| CPU + 16x16 NPU | 200 | 199 (99.5 %) | 21,172 | 423 us |
 
-**Speedup: 38.49x**, and every logit of every image is bit-exact with the NumPy int8 model.
-(Board run of 2026-11-07, before the caches and the branch predictor; not re-measured yet.)
+**Speedup: 40.03x**, and every logit of every image is bit-exact with the NumPy int8 model.
 
 **FPGA build** (Quartus Prime Lite 25.1, DE10-Lite / 10M50, whole SoC: CPU, SDRAM, VGA, 16x16 NPU)
 
-A CPU-only build with 4 KB instruction and data caches (no NPU) uses 13,695 LEs and 122 / 182 M9K and reaches 51.03 MHz.
+A CPU-only build with 4 KB instruction and data caches (no NPU) uses 13,695 LEs and 122 / 182 M9K and reaches 54.34 MHz.
 
 | Logic elements | Memory bits | 9-bit multipliers | Fmax (slow, 85 °C) | Setup slack at 50 MHz |
 |---|---|---|---|---|
-| 35,774 (72 %) | 1,164,584 (69 %), 167 / 182 M9K | 136 (47 %) | 56.17 MHz | +2.198 ns |
+| 35,646 (72 %) | 1,164,584 (69 %), 167 / 182 M9K | 136 (47 %) | 56.47 MHz | +2.292 ns |
 
 **Snake on the CPU** (frame captured from the simulated VGA monitor; [how it's tested](docs/notes.md#stage-3-graphics))
 

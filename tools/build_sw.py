@@ -10,7 +10,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests" / "soc"))
-from soc_sim import SW, build_bootloader, build_program  # noqa: E402
+from soc_sim import SW, build_bootloader, build_coremark, build_program  # noqa: E402
+from programs import build  # noqa: E402  (tests/core, put on the path by soc_sim)
 
 OUT = ROOT / "build" / "sw"
 
@@ -42,6 +43,17 @@ def main():
         binary = build_program(src).with_suffix(".bin")
         shutil.copy(binary, OUT / f"{src.stem}.bin")
         print(f"{OUT / (src.stem + '.bin')}  ({binary.stat().st_size} bytes, send with tools/upload.py)")
+
+    # CoreMark for the board: ITERATIONS=0 lets it pick a count that runs about 10 seconds.
+    # coremark_ram.bin runs from on-chip RAM. coremark_sdram.bin is sent into SDRAM with --data
+    # 0x40000000 and started by jump_to_sdram.bin (a 2-instruction program in RAM).
+    for where in ("ram", "sdram"):
+        binary = build_coremark(0, sdram=where == "sdram").with_suffix(".bin")
+        shutil.copy(binary, OUT / f"coremark_{where}.bin")
+        print(f"{OUT / f'coremark_{where}.bin'}  ({binary.stat().st_size} bytes)")
+    _, stub, _ = build(SW / "boot" / "jump_to_sdram.S", [], name="ram-jump_to_sdram")
+    shutil.copy(stub.with_suffix(".bin"), OUT / "jump_to_sdram.bin")
+    print(f"{OUT / 'jump_to_sdram.bin'}  (starts a program in SDRAM)")
 
 
 if __name__ == "__main__":

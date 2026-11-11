@@ -21,8 +21,9 @@ module sdram_ctrl #(
     parameter int T_RP           = 1,      // PRECHARGE -> next command: 15 ns
     parameter int T_RFC          = 3,      // REFRESH -> next command: 60 ns
     parameter int T_MRD          = 2,      // LOAD MODE -> next command: 2 cycles
-    parameter int READ_LATENCY   = 3       // cycles from READ to sampling the first halfword:
-                                           //   CAS latency 2, plus 1 for the registered command
+    parameter int READ_LATENCY   = 3       // cycles from READ until the first halfword is in the
+                                           //   burst buffer (captured at the pins half a cycle
+                                           //   earlier, see dq_in_q)
 ) (
     input  logic         clk,
     input  logic         rst,
@@ -126,7 +127,17 @@ module sdram_ctrl #(
     localparam logic [15:0] MRD_DELAY           = T_MRD[15:0];
     localparam logic [15:0] WRITE_DELAY         = WRITE_RECOVERY[15:0];
     localparam logic [15:0] READ_RECOVERY_DELAY = READ_RECOVERY[15:0];
+    // Read data capture. The DQ pins go into one register in the I/O cell (FAST_INPUT_REGISTER in
+    // the .qsf) clocked on the FALLING edge: for halfword 0 that is 50 ns after the READ
+    // (READ_LATENCY - 0.5 cycles), the middle of the window measured on this board (clean from
+    // 50 to 70 ns, edge-ml-accelerator/boardtest). The burst buffer copies it at the next rising
+    // edge. Board history: sampling the pins straight into the 8-slot buffer (fan-out 8, capture
+    // time set by routing) corrupted line reads; a rising-edge I/O register at 60 ns read every
+    // halfword one cycle late.
     localparam logic [3:0]  SAMPLE_FIRST        = READ_LATENCY[3:0];
+
+    logic [15:0] dq_in_q;
+    always_ff @(negedge clk) dq_in_q <= sdram_dq_in;
 
     // Column address for command i, with A10 (auto-precharge) on the last one.
     function automatic logic [12:0] column(input logic [8:0] col, input logic [2:0] i,
@@ -274,7 +285,7 @@ module sdram_ctrl #(
                         issued     <= issued + 3'd1;
                     end
                     if (phase >= SAMPLE_FIRST) begin
-                        rbuf[16*beat +: 16] <= sdram_dq_in;
+                        rbuf[16*beat +: 16] <= dq_in_q;
                         beat <= beat + 4'd1;
                         if (beat == last_beat) state <= S_READ_DONE;
                     end

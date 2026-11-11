@@ -2,7 +2,6 @@
 SDRAM model; sw/soc/mnist.c runs 2 images in software and 20 on the NPU, and every logit must
 equal the NumPy int8 model's."""
 
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -45,9 +44,10 @@ def soc_runner():
 
 
 def test_mnist(soc_runner):
-    subprocess.run(["python3", str(ROOT / "tools" / "export_mnist.py"), str(N_IMAGES)], check=True)
+    # Its own file name, so the board's 200-image build/mnist/mnist_blob.bin isn't replaced.
+    subprocess.run(["python3", str(ROOT / "tools" / "export_mnist.py"), str(N_IMAGES),
+                    f"mnist_blob_{N_IMAGES}"], check=True)
     blob = ROOT / "build" / "mnist" / f"mnist_blob_{N_IMAGES}.hex"
-    shutil.copy(ROOT / "build" / "mnist" / "mnist_blob.hex", blob)
     bootrom = build_bootrom(SW / "boot" / "jump_to_ram.S")
     program = build_program(SW / "soc" / "mnist.c", extra_flags=["-DN_SOFTWARE=2", f"-DN_NPU={N_IMAGES}"],
                             name="soc-mnist-test")

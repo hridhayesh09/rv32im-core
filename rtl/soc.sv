@@ -24,7 +24,11 @@ module soc #(
     parameter int          ICACHE_WAYS  = 1,
     parameter int          DCACHE_SIZE  = 4096,           // bytes; 0 = no data cache
     parameter int          DCACHE_WAYS  = 1,
-    parameter bit          NPU          = 1'b1            // include the 16x16 NPU
+    parameter bit          NPU          = 1'b1,           // include the 16x16 NPU
+    parameter int          BP_MODE      = 2,              // branch predictor (see core.sv)
+    parameter int          BTB_BITS     = 5,
+    parameter int          BHT_BITS     = 8,
+    parameter int          RAS_DEPTH    = 4
 ) (
     input  logic        clk,
     input  logic        rst,
@@ -64,7 +68,8 @@ module soc #(
     logic [31:0] imem_addr, imem_rdata, dmem_addr, dmem_wdata, dmem_rdata;
 
     /* verilator lint_off PINCONNECTEMPTY */
-    core #(.RESET_PC(32'h0000_0000)) u_core (
+    core #(.RESET_PC(32'h0000_0000), .BP_MODE(BP_MODE), .BTB_BITS(BTB_BITS), .BHT_BITS(BHT_BITS),
+           .RAS_DEPTH(RAS_DEPTH)) u_core (
         .clk, .rst,
         .imem_en, .imem_addr, .imem_rdata, .imem_stall, .fetch_valid, .cache_flush,
         .dmem_en, .dmem_we, .dmem_addr, .dmem_wdata, .dmem_rdata, .dmem_stall,
@@ -219,8 +224,11 @@ module soc #(
             return SLAVE_VGA;
         end else if (addr[31:28] == 4'h3) begin
             return NPU ? SLAVE_NPU : SLAVE_NONE;
-        end else if (addr[31:28] == 4'h4) begin
-            return SLAVE_SDRAM;            // only reached without a data cache
+        end else if (addr[31:28] == 4'h4 || addr[31:28] == 4'h5) begin
+            // 0x4...: SDRAM (reaches the bus only without a data cache). 0x5...: the same SDRAM,
+            // never cached (for buffers shared with hardware; the data cache doesn't see these
+            // accesses, so software keeps the two views apart).
+            return SLAVE_SDRAM;
         end else begin
             return SLAVE_NONE;
         end

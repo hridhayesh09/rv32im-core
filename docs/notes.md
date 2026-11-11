@@ -1363,3 +1363,102 @@ Every prediction is checked in EX against the real outcome and target, and the w
 flushed. Then I tested it like that's the only guarantee: lockstep with Spike on every program
 with no predictor, tiny aliasing tables, and the default, a directed test with stale entries and
 deep recursion, and planted bugs to prove the tests fail when the checking is wrong.
+
+## Stage 5, step 7: CoreMark, and an SDRAM bug only the board could find
+
+### CoreMark
+CoreMark (EEMBC) is the standard small benchmark for embedded CPUs: linked lists, matrix maths and
+a state machine, with its own self-check (CRCs of the results). The official sources are a git
+submodule (`third_party/coremark`); only the port is ours (`sw/coremark`): time comes from the cycle
+counter, output from our `printf`, and at the end the port prints the raw counters for the timed
+run (cycles, instructions, branches, mispredicts). CoreMark/MHz = iterations x 10^6 / cycles, so no
+floating point is needed. A valid score needs a run of at least 10 seconds; with `ITERATIONS=0`
+CoreMark calibrates itself and picked 2000 iterations (about 15 s at 50 MHz).
+
+In simulation (`test_coremark`) 2 iterations run, and the test checks the CRCs against CoreMark's
+known values for this run. On the board ([log](results/board_2026-11-11.md)):
+
+| Program in | CoreMark/MHz | CoreMark at 50 MHz | CPI | Mispredicted branches |
+|---|---|---|---|---|
+| on-chip RAM (1-cycle memory) | 2.699 | 134.9 | 1.177 | 12.8 % |
+| SDRAM through 4 KB I$ + 4 KB D$ | 2.661 | 133.0 | 1.194 | 12.8 % |
+
+The caches hide almost all of SDRAM's latency: 1.4 % slower than 1-cycle memory.
+
+### The tradeoff sweep (simulation, `python tools/coremark_sweep.py`)
+The whole SoC with the SDRAM model, CoreMark 2 iterations, one configuration change at a time
+from the default (32-entry BTB, gshare with 256 counters, 4-entry RAS, 4 KB direct-mapped caches):
+
+| Configuration | CoreMark/MHz | CPI | Mispredicted |
+|---|---|---|---|
+| RAM, no predictor | 2.315 | 1.372 | 60.2 % |
+| RAM, bimodal | 2.714 | 1.170 | 11.2 % |
+| RAM, gshare | 2.694 | 1.179 | 13.3 % |
+| RAM, gshare + RAS (default) | 2.698 | 1.177 | 12.9 % |
+| RAM, default with 16-entry BTB | 2.660 | 1.194 | 17.0 % |
+| RAM, default with 64-entry BTB | 2.708 | 1.173 | 11.8 % |
+| RAM, default with 1024 counters | 2.719 | 1.168 | 10.7 % |
+| SDRAM, 1 KB direct-mapped caches | 2.314 | 1.372 | |
+| SDRAM, 2 KB direct-mapped | 2.564 | 1.239 | |
+| SDRAM, 4 KB direct-mapped (default) | 2.649 | 1.199 | |
+| SDRAM, 8 KB direct-mapped | 2.680 | 1.185 | |
+| SDRAM, 1 KB 2-way | 2.435 | 1.304 | |
+| SDRAM, 4 KB 2-way | 2.648 | 1.199 | |
+
+What it says:
+- **Prediction is worth 17 %** (2.315 -> 2.698): without it, 60 % of branches send fetch the wrong way.
+- **gshare doesn't beat bimodal at 256 counters** on CoreMark (2.694 vs 2.714): the history
+  spreads each branch over several counters, which then alias. With 1024 counters gshare is the
+  best of all (2.719). The BTB size matters more than the direction scheme: 16 entries miss
+  branches entirely (17 % mispredicted).
+- **Associativity helps small caches, not big ones**: at 1 KB, 2-way is 5 % faster (conflict misses);
+  at 4 KB both are the same, because CoreMark's working set fits.
+- **Simulation vs board**: from RAM the two agree (2.698 vs 2.699). From SDRAM the 2-iteration
+  simulation is lower (2.649 vs 2.661), because cold misses at the start weigh more in a short run.
+
+The cost side (logic elements, M9K, Fmax per configuration) comes from separate Quartus builds.
+
+### The SDRAM bug
+The first board run of the cached build failed: the bootloader rejected CoreMark loaded into SDRAM
+(`ERR crc`), and the SDRAM test failed everywhere, while every simulation passed.
+- The cached build reads SDRAM in 16-byte lines (8 halfwords back to back); the board had only
+  ever run single-word reads before.
+- The fitter report showed the data pins with **no input register** in the I/O cell and a fan-out
+  of 8: each pin went straight into the 8-slot burst buffer, so when the data was captured
+  depended on where the router put the wires. The simulation model can't see that.
+- Moving the capture into an I/O-cell register (rising edge, 60 ns after READ) made it fail
+  everywhere instead. A new diagnostic (`sw/soc/sdram_diag.c`) split the problem: with a new
+  uncached window onto SDRAM (0x5000_0000), single-word reads returned the upper halfword twice,
+  and line reads returned the right halfwords shifted by one. So the data in SDRAM was right
+  (writes fine) and reads were captured one cycle late: the old fabric register had been
+  "sampling early" thanks to its long input wire.
+- Fix: the I/O-cell register on the **falling** edge, 50 ns after READ, which is the middle of
+  the window measured on this board with the earlier boardtest (clean from 50 to 70 ns). All
+  four diagnostic paths and the SDRAM test pass, and CoreMark runs from SDRAM.
+
+Lesson: pins whose timing isn't analysed (the SDRAM pins are false paths in the .sdc) need their
+registers pinned into the I/O cells, or the timing silently changes from one build to the next.
+
+### Interview questions
+
+**What does CoreMark/MHz measure, and why per MHz?**
+Iterations of the benchmark per second, divided by the clock. It factors out the clock so cores
+can be compared on how much work they do per cycle (as long as memory keeps up).
+
+**Why does a branch predictor matter so much on a 5-stage pipeline?**
+Branches resolve in EX, so every wrong guess throws away 2 fetched instructions. In the
+simulated CoreMark run (629,723 instructions, one branch every 4.9) there were 78,064 mispredicts
+without prediction and 16,670 with: 2 x (78,064 - 16,670) / 629,723 = 0.195 cycles per
+instruction, exactly the measured CPI difference (1.372 vs 1.177).
+
+**Your design passed every simulation and failed on the board. How did you debug it?**
+I read the fitter report (no input register on the data pins), made one change at a time, and
+when that didn't fix it I wrote a test that separates the paths: uncached single words, burst
+reads, burst writes. The pattern of wrong values (upper halfword twice; correct halfwords shifted
+by one) showed it was the read capture time, not the writes or the address logic. Then I matched
+the capture point to an earlier measurement on the same board.
+
+**Why does sampling on the falling edge help?**
+The data window from the SDRAM is about 20 ns wide and doesn't line up with our rising edges: one
+is too early, the next is too late. The falling edge in between lands in the middle. Capturing in
+the I/O cell makes that moment fixed by the silicon, not by routing.

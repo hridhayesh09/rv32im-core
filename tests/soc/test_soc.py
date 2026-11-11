@@ -11,7 +11,7 @@ import pytest
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles
 
-from soc_sim import (SW, build_bootloader, build_bootrom, build_program, build_soc,
+from soc_sim import (SW, build_bootloader, build_bootrom, build_coremark, build_program, build_soc,
                      uart_monitor, uart_send)
 
 HERE = Path(__file__).resolve().parent
@@ -82,6 +82,35 @@ async def cached_program(dut):
     assert "CACHE PASS\r\n" in text
     misses = {name: int(text.split(f"{name} accesses ")[1].split()[2]) for name in ("icache", "dcache")}
     assert misses["icache"] > 0 and misses["dcache"] > 0, "the caches were never missed"
+
+
+@cocotb.test()
+async def coremark(dut):
+    """CoreMark, a few iterations. Its results (list, matrix and state CRCs) must be the known
+    values for the 2K performance run. CoreMark also flags any run shorter than 10 seconds as an
+    error; that's the only error allowed here (the board run is long enough)."""
+    text = await run_until_done(dut, 20_000_000)
+    assert "COREMARK DONE" in text
+    value = {k.strip(): v.strip() for k, v in
+             (line.split(":", 1) for line in text.splitlines() if ":" in line)}
+    assert "2K performance run parameters for coremark." in text
+    for name, crc in (("seedcrc", "0xe9f5"), ("[0]crclist", "0xe714"),
+                      ("[0]crcmatrix", "0x1fd7"), ("[0]crcstate", "0x8e3a")):
+        assert value[name] == crc, f"{name} is {value[name]}, should be {crc}"
+    errors = [line for line in text.splitlines() if "ERROR" in line]
+    assert errors == ["ERROR! Must execute for at least 10 secs for a valid result!"], errors
+    cycles, iterations = int(value["Timed cycles"]), int(value["Iterations"])
+    instret, branches, misp = (int(value[k]) for k in ("Timed instret", "Timed branches",
+                                                         "Timed mispredicts"))
+    dut._log.info(f"CoreMark/MHz {iterations * 1e6 / cycles:.3f}, CPI {cycles / instret:.3f}, "
+                  f"mispredicts {misp}/{branches} ({100 * misp / branches:.1f} %)")
+
+
+@cocotb.test()
+async def memory_paths(dut):
+    """SDRAM through the caches (bursts) and through the uncached alias (single words)."""
+    text = await run_until_done(dut, 6_000_000)
+    assert "DIAG PASS\r\n" in text
 
 
 @cocotb.test()
@@ -171,14 +200,14 @@ def soc_runner():
     return build_soc()
 
 
-@pytest.mark.parametrize("program", ["hello", "sdram_test", "perf_test"])
+@pytest.mark.parametrize("program", ["hello", "sdram_test", "perf_test", "sdram_diag"])
 def test_soc(soc_runner, program):
     bootrom = build_bootrom(SW / "boot" / "jump_to_ram.S")
     hexfile = build_program(SW / "soc" / f"{program}.c")
     soc_runner.test(
         hdl_toplevel="tb_soc",
         test_module="test_soc",
-        testcase={"sdram_test": "sdram", "perf_test": "perf"}.get(program, program),
+        testcase={"sdram_test": "sdram", "perf_test": "perf", "sdram_diag": "memory_paths"}.get(program, program),
         test_dir=HERE,
         plusargs=[f"+bootrom={bootrom}", f"+program={hexfile}"],
         results_xml=str(hexfile.with_suffix(".result.xml")),
@@ -210,6 +239,21 @@ def test_bootloader_load(soc_runner):
         plusargs=[f"+bootrom={bootrom}"],
         extra_env={"PROGRAM_BIN": str(hexfile.with_suffix(".bin"))},
         results_xml=str(hexfile.with_suffix(".result.xml")),
+    )
+
+
+@pytest.mark.parametrize("where", ["ram", "sdram"])
+def test_coremark(soc_runner, where):
+    bootrom = build_bootrom(SW / "boot" / ("jump_to_sdram.S" if where == "sdram" else "jump_to_ram.S"))
+    program = build_coremark(2, sdram=where == "sdram")
+    soc_runner.test(
+        hdl_toplevel="tb_soc",
+        test_module="test_soc",
+        testcase="coremark",
+        test_dir=HERE,
+        plusargs=[f"+bootrom={bootrom}",
+                  f"+sdram_init={program}" if where == "sdram" else f"+program={program}"],
+        results_xml=str(program.with_suffix(".result.xml")),
     )
 
 

@@ -1,4 +1,5 @@
-// Minimal boot ROM for simulation: jump straight to a program preloaded into SDRAM.
+// Jump straight to a program at the start of SDRAM: as a boot ROM in simulation (program
+// preloaded into SDRAM), or as a tiny program in RAM on the board (tools/build_sw.py).
     .section .text.init
     .globl _start
 _start:

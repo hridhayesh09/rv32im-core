@@ -1,3 +1,9 @@
 [submodule "tests/riscv-tests"]
 	path = tests/riscv-tests
 	url = https://github.com/riscv-software-src/riscv-tests
+[submodule "third_party/coremark"]
+	path = third_party/coremark
+	url = https://github.com/eembc/coremark
+[submodule "third_party/doomgeneric"]
+	path = third_party/doomgeneric
+	url = https://github.com/ozkl/doomgeneric

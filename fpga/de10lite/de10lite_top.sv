@@ -6,8 +6,9 @@
 //              (the DE10-Lite has no USB serial port: use a 3.3 V USB-serial adapter)
 //   VGA        640x480 at 60 Hz on the VGA connector
 //   SDRAM      DRAM_CLK is the inverted system clock, so the chip samples each command half a
-//              cycle after the controller sends it. Read data is then sampled 60 ns after READ;
-//              on this board (edge-ml-accelerator/boardtest) reads were clean from 50 to 70 ns.
+//              cycle after the controller sends it. Read data is captured 50 ns after READ (a
+//              falling-edge I/O register); on this board (edge-ml-accelerator/boardtest) reads
+//              were clean from 50 to 70 ns.
 // Build configurations (set per Quartus revision, see rv32im_soc.qsf / rv32im_cpu.qsf):
 //   full SoC: NPU, no caches (meets timing with the NPU)
 //   CPU-only: no NPU, instruction and data caches (programs can run from SDRAM)
@@ -16,7 +17,11 @@ module de10lite_top #(
     parameter int ICACHE_SIZE = 0,
     parameter int ICACHE_WAYS = 1,
     parameter int DCACHE_SIZE = 0,
-    parameter int DCACHE_WAYS = 1
+    parameter int DCACHE_WAYS = 1,
+    parameter int BP_MODE     = 2,      // branch predictor: 0 none, 1 bimodal, 2 gshare
+    parameter int BTB_BITS    = 5,
+    parameter int BHT_BITS    = 8,
+    parameter int RAS_DEPTH   = 4
 ) (
     input  logic        MAX10_CLK1_50,
     input  logic [1:0]  KEY,
@@ -74,7 +79,11 @@ module de10lite_top #(
         .ICACHE_SIZE  (ICACHE_SIZE),
         .ICACHE_WAYS  (ICACHE_WAYS),
         .DCACHE_SIZE  (DCACHE_SIZE),
-        .DCACHE_WAYS  (DCACHE_WAYS)
+        .DCACHE_WAYS  (DCACHE_WAYS),
+        .BP_MODE      (BP_MODE),
+        .BTB_BITS     (BTB_BITS),
+        .BHT_BITS     (BHT_BITS),
+        .RAS_DEPTH    (RAS_DEPTH)
     ) u_soc (
         .clk, .rst,
         .txd,

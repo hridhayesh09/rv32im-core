@@ -59,6 +59,7 @@ set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to DRAM_LDQM
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to DRAM_UDQM
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to DRAM_DQ[*]
 set_instance_assignment -name FAST_OUTPUT_ENABLE_REGISTER ON -to DRAM_DQ[*]
+set_instance_assignment -name FAST_INPUT_REGISTER ON -to DRAM_DQ[*]
 
 # ---------------------------------------------------------------- clock, keys, switches, LEDs
 set_location_assignment PIN_P11 -to MAX10_CLK1_50

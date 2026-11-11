@@ -31,6 +31,28 @@ def build_program(src, extra_flags=(), name=None, sdram=False):
     return hexfile
 
 
+COREMARK = ROOT / "third_party" / "coremark"
+COREMARK_FLAGS = ["-O2", "-ffreestanding"]
+
+
+def build_coremark(iterations, sdram=False, name=None):
+    """CoreMark (third_party/coremark with the port in sw/coremark), for on-chip RAM or SDRAM.
+    iterations=0 lets CoreMark pick a count that runs for about 10 seconds. Returns the hex path."""
+    flags = " ".join(COREMARK_FLAGS + ["-march=rv32im_zicsr_zifencei", "-mabi=ilp32"])
+    _, hexfile, _ = build(
+        COREMARK / "core_main.c", [SW / "coremark", COREMARK, SW / "lib"],
+        name=name or f"coremark-{'sdram' if sdram else 'ram'}-{iterations}",
+        extra_sources=[SW / "crt0.S", SW / "lib" / "uart.c", SW / "lib" / "printf.c",
+                       SW / "coremark" / "core_portme.c",
+                       *(COREMARK / f for f in ("core_list_join.c", "core_matrix.c", "core_state.c",
+                                                "core_util.c"))],
+        extra_flags=[*COREMARK_FLAGS, f"-DITERATIONS={iterations}",
+                     f'-DCOMPILER_FLAGS="{flags}"',
+                     f'-DMEM_LOCATION="{"SDRAM via caches" if sdram else "on-chip RAM"}"'],
+        linker_script=SW / ("sdram.ld" if sdram else "link.ld"))
+    return hexfile
+
+
 def build_bootrom(src, extra_sources=()):
     """A boot ROM image (linked at address 0 with sw/boot/rom.ld). Returns the hex path."""
     _, hexfile, _ = build(src, [SW / "lib"], name=f"bootrom-{src.stem}",
@@ -44,15 +66,17 @@ def build_bootloader():
                          extra_sources=[SW / "boot" / "start.S", SW / "lib" / "uart.c"])
 
 
-def build_soc():
+def build_soc(parameters=None, tag=""):
+    """tb_soc with the default configuration, or with other cache/predictor parameters (tb_soc.sv)
+    built in build/tb_soc<tag>."""
     from cocotb_tools.runner import get_runner
     runner = get_runner("verilator")
     runner.build(
         sources=[ROOT / "rtl" / f for f in RTL_SOURCES] + [ROOT / "tb" / f for f in TB_SOURCES],
         hdl_toplevel="tb_soc",
-        build_dir=ROOT / "build" / "tb_soc",
+        build_dir=ROOT / "build" / f"tb_soc{tag}",
         build_args=["-Wall"],
-        parameters={"UART_DIVISOR": UART_DIVISOR},
+        parameters={"UART_DIVISOR": UART_DIVISOR, **(parameters or {})},
         always=True,
     )
     return runner

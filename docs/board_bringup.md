@@ -75,6 +75,27 @@ T+50 to T+70. Note which test fails and what values come back.
 Copy the terminal output into `docs/results/stage2_board.txt` and the copy cycle counts into the
 README. Those are the first numbers measured on hardware.
 
+## CoreMark (Stage 5)
+Both bitstreams are built by Quartus in `fpga/de10lite/output_files/`: `rv32im_soc.sof` (whole SoC
+with the NPU, no caches) and `rv32im_cpu.sof` (CPU only, 4 KB instruction and data caches). Run
+`make sw` first. CoreMark picks its own iteration count so the timed part lasts about 10 seconds
+(the rule for a valid score), after a shorter calibration run.
+
+From on-chip RAM (either bitstream):
+```bash
+python tools/upload.py COM5 build/sw/coremark_ram.bin --until "COREMARK DONE"
+```
+From SDRAM through the caches (`rv32im_cpu.sof` only):
+```bash
+python tools/upload.py COM5 build/sw/jump_to_sdram.bin --data 0x40000000 build/sw/coremark_sdram.bin --until "COREMARK DONE"
+```
+To switch bitstreams: `quartus_pgm -c USB-Blaster -m jtag -o "p;output_files/rv32im_cpu.sof"`.
+
+**Expect:** `Correct operation validated.`, the CRCs `seedcrc 0xe9f5`, `crclist 0xe714`,
+`crcmatrix 0x1fd7`, `crcstate 0x8e3a`, and the raw numbers at the end (`Timed cycles`,
+`Iterations`, `Timed mispredicts`). CoreMark/MHz = Iterations x 1,000,000 / Timed cycles.
+Save the whole output into the board log.
+
 ## What to film (Stage 2 demo video, ~1 minute)
 1. The board with the USB-serial adapter wired up (2 s close-up).
 2. Pressing the two keys together: the terminal shows the bootloader banner and `ready`.
