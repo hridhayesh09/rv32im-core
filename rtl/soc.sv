@@ -248,6 +248,12 @@ module soc #(
         .wb_sel   (bus_sel),
         .wb_dat_r (sdram_dat_r),
         .wb_ack   (sdram_ack),
+        .line_req   (1'b0),       // the caches use this port (Stage 5)
+        .line_we    (1'b0),
+        .line_addr  ('0),
+        .line_wdata ('0),
+        .line_rdata (),
+        .line_ack   (),
         .sdram_cke, .sdram_cs_n, .sdram_ras_n, .sdram_cas_n, .sdram_we_n,
         .sdram_ba, .sdram_addr, .sdram_dqm, .sdram_dq_out, .sdram_dq_oe, .sdram_dq_in
     );

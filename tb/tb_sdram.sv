@@ -9,6 +9,12 @@ module tb_sdram (
     input  logic [3:0]  wb_sel,
     output logic [31:0] wb_dat_r,
     output logic        wb_ack,
+    input  logic         line_req,
+    input  logic         line_we,
+    input  logic [25:0]  line_addr,
+    input  logic [127:0] line_wdata,
+    output logic [127:0] line_rdata,
+    output logic         line_ack,
     output int          violations,
     output int          refreshes
 );
@@ -19,6 +25,7 @@ module tb_sdram (
 
     sdram_ctrl u_ctrl (
         .clk, .rst, .wb_stb, .wb_we, .wb_adr, .wb_dat_w, .wb_sel, .wb_dat_r, .wb_ack,
+        .line_req, .line_we, .line_addr, .line_wdata, .line_rdata, .line_ack,
         .sdram_cke(cke), .sdram_cs_n(cs_n), .sdram_ras_n(ras_n), .sdram_cas_n(cas_n),
         .sdram_we_n(we_n), .sdram_ba(ba), .sdram_addr(addr), .sdram_dqm(dqm),
         .sdram_dq_out(dq_out), .sdram_dq_oe(dq_oe), .sdram_dq_in(dq_in)
