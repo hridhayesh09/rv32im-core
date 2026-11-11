@@ -1485,7 +1485,8 @@ the I/O cell makes that moment fixed by the silicon, not by routing.
 - **Loading**: a 28.8 MB WAD at 115,200 baud would take 42 minutes. The bootloader got a `BAUD`
   command (switch to 2 Mbaud, 25 clocks per bit), the UART got a 64-byte receive FIFO (bytes keep
   arriving during a cache miss), and the bootloader's CRC uses a lookup table. Upload: 144 s.
-- **Keys**: `tools/doom_keys.py` opens a small window and sends 2 bytes per key press or release.
+- **Keys**: `tools/doom_keys.py` opens a small window and sends 2 bytes per key press or release
+  (tested on the board: the game plays from the laptop's keyboard).
 
 ### Two hardware lessons
 - **Block RAM port widths.** The first framebuffer had the CPU port 32 bits wide in true dual-port

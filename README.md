@@ -15,7 +15,7 @@ SystemVerilog, grown into a system-on-chip on the Terasic DE10-Lite (Intel MAX 1
 | 3 | VGA framebuffer, graphics driver, a playable game | **runs on the DE10-Lite**: Snake playable on a real VGA monitor with the board's buttons |
 | 4 | Systolic array accelerator, MNIST software vs accelerator | **runs on the DE10-Lite**: 16x16 NPU, MNIST bit-exact, 38.49x faster than software |
 | 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | done on the board; cost table in progress |
-| Doom | doomgeneric with picolibc, 8-bit VGA mode, keyboard over the UART | **runs on the DE10-Lite**: 11.7 fps in Doom's timedemo (playing with the keyboard not tried yet) |
+| Doom | doomgeneric with picolibc, 8-bit VGA mode, keyboard over the UART | **runs on the DE10-Lite**: playable with the laptop's keyboard, 11.7 fps in Doom's timedemo |
 | 6 | OpenLane on Sky130 | planned |
 
 The full plan for each stage is in [docs/roadmap.md](docs/roadmap.md).
@@ -99,8 +99,7 @@ is the slowest. (`python tools/bp_sweep.py`; 1-cycle memory, simulation.)
 **Doom on the board** ([board log](docs/results/board_2026-11-11.md#doom), [how it works](docs/notes.md#doom))
 
 Freedoom Phase 1 on the CPU-only build (4 KB caches, everything in SDRAM, 320x200 in 256 colours on
-the VGA monitor). Keys come from the laptop over the serial port (`tools/doom_keys.py`; not yet
-tried on the board).
+the VGA monitor), played with the laptop's keyboard over the serial port (`tools/doom_keys.py`).
 
 | Doom's benchmark (`-timedemo demo1`) | Result |
 |---|---|
