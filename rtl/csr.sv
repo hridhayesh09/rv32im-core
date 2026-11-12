@@ -54,6 +54,13 @@ module csr (
     logic [63:0] mcycle, minstret;
     logic [63:0] hpm [NUM_HPM];
 
+    // A write to minstret takes two cycles: the value is stored this cycle and corrected next cycle
+    // (minus the instructions that will still retire), so the 64-bit arithmetic isn't on the long
+    // path from forwarding through the CSR logic (the slowest path in the ASIC flow). The core
+    // flushes the instructions after such a write, so nothing reads minstret in between.
+    logic        ir_wr, ir_wr_adj;
+    logic [63:0] ir_wr_value;
+
     // Events are registered before they're counted, so the 64-bit increment isn't on the path from
     // the event's source (deep in EX). A read adds the registered event, so the count stays exact.
     logic [NUM_HPM-1:0] events_q;
@@ -140,10 +147,13 @@ module csr (
             minstret <= '0;
             for (int i = 0; i < NUM_HPM; i++) hpm[i] <= '0;
             events_q <= '0;
+            ir_wr    <= 1'b0;
         end else begin
             events_q <= events;
             mcycle   <= mcycle + 64'd1;
-            minstret <= minstret + {63'b0, retire};
+            ir_wr    <= 1'b0;
+            if (ir_wr) minstret <= ir_wr_value - {63'b0, ir_wr_adj} - 64'd1 + {63'b0, retire};
+            else       minstret <= minstret + {63'b0, retire};
             for (int i = 0; i < NUM_HPM; i++) hpm[i] <= hpm[i] + {63'b0, events_q[i]};
 
             if (trap) begin
@@ -169,9 +179,20 @@ module csr (
                     // The ISA says the write takes effect after this instruction, which doesn't
                     // count itself: the next read should return the value written plus the
                     // instructions retired since. The writer and an older instruction in MEM will
-                    // still retire (and count), so start that much lower.
-                    12'hB02: minstret <= {minstret[63:32], wdata} - {63'b0, mem_pending} - 64'd1;
-                    12'hB82: minstret <= {wdata, minstret[31:0]} - {63'b0, mem_pending} - 64'd1;
+                    // still retire (and count), so start that much lower (applied next cycle).
+                    12'hB02: begin
+                        ir_wr       <= 1'b1;
+                        ir_wr_value <= {minstret[63:32], wdata};
+                        ir_wr_adj   <= mem_pending;
+                    end
+                    // Writing the high half: the low half keeps counting, so the older instructions
+                    // (in WB now, in MEM later) do count; only the writer itself doesn't. (Found by
+                    // the lockstep test: this used the low-half correction and lost 2 counts.)
+                    12'hB82: begin
+                        ir_wr       <= 1'b1;
+                        ir_wr_value <= {wdata, minstret[31:0] + {31'b0, wb_pending}};
+                        ir_wr_adj   <= 1'b0;
+                    end
                     default: begin
                         if (hpm_sel && addr[11:8] == 4'hB) begin
                             if (hpm_high) hpm[hpm_idx][63:32] <= wdata;

@@ -92,6 +92,35 @@ e9: ecall
     csrr a6, minstret
     NOP2
     CHECK(22, a6, 5)
+
+    // The hard cases for minstret writes (applied a cycle later in the hardware): read right after
+    // the write, a load still in MEM during the write, the high half, and set/clear forms. Lockstep
+    // with Spike checks every value read.
+    li   t1, 100
+    csrw minstret, t1
+    csrr a6, minstret                      // straight after the write: 100
+    la   t2, scratch
+    lw   t3, 0(t2)                         // still in MEM when the next write happens
+    csrw minstret, t1
+    csrr a7, minstret
+    csrs minstret, t1                      // read-modify-write (set bits)
+    csrr t4, minstret
+    csrc minstret, t1                      // read-modify-write (clear bits)
+    csrr t5, minstret
+    csrs minstret, x0                      // reads only: no write
+    csrr t6, minstret
+    li   t1, 7
+    csrw minstreth, t1                     // the high half
+    csrr s7, minstreth
+    csrr s8, minstret
+    NOP2
+    CHECK(23, a6, 100)
+    CHECK(24, s7, 7)
+
+    .pushsection .data
+    .align 2
+scratch: .word 0x12345678
+    .popsection
 TEST_END
 
 handler:

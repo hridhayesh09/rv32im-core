@@ -190,13 +190,15 @@ module core
     assign imem_en   = !stall_d && !freeze;
     assign fetch_valid = d.valid;
 
+    // A flush (redirect from EX, late in the cycle) only clears the valid bit; the other fields load
+    // as usual, so the late signal drives one flip-flop instead of the whole register.
     always_ff @(posedge clk) begin
         if (rst)            d.valid <= 1'b0;
         else if (freeze)    ;  // hold
-        else if (flush_d)   d.valid <= 1'b0;
-        else if (!stall_d)  d       <= '{valid: 1'b1, pc: pc_f, pred_taken: pred_taken_f,
+        else if (!stall_d)  d       <= '{valid: !flush_d, pc: pc_f, pred_taken: pred_taken_f,
                                          pred_target: pred_target_f, pred_branch: pred_branch_f,
                                          pred_idx: pred_idx_f, pred_ctr: pred_ctr_f};
+        else if (flush_d)   d.valid <= 1'b0;
     end
 
     // ---------------------------------------------------------------- ID
@@ -259,17 +261,12 @@ module core
     always_ff @(posedge clk) begin
         if (rst) begin
             e.valid <= 1'b0;
-        end else if (freeze) begin
-            // hold
-        end else if (flush_e) begin
-            e.valid <= 1'b0;
-        end else if (stall_e) begin
-            // hold: a multiply/divide is still running
-        end else if (stall_d) begin
-            e.valid <= 1'b0;   // bubble
+        end else if (freeze || stall_e) begin
+            // hold (stall_e: a multiply/divide is still running; a flush never comes with it)
         end else begin
+            // A flush or a load-use bubble only clears the valid bit (see the IF/ID register).
             e <= '{
-                valid:     d.valid,
+                valid:     d.valid && !flush_e && !stall_d,
                 pc:        d.pc,
                 instr:     instr_d,
                 rs1_val:   rs1_val_d,
@@ -456,7 +453,15 @@ module core
     // FENCE.I redirects to the next instruction: the 2 younger instructions, fetched before an
     // older store to code finished, are flushed and fetched again.
     // (Not while a multiply/divide is still running: it stays in EX, so it isn't flushed.)
-    assign redirect    = e.valid && !stall_e && (exception || e.mret || e.fence_i || mispredict);
+    // A write to minstret is applied by the CSR unit one cycle later (see csr.sv), so the younger
+    // instructions are flushed and fetched again, like after FENCE.I: none can read it too early.
+    // (CSRRW always writes; CSRRS/CSRRC only with a nonzero rs1 / immediate.)
+    logic instret_write;
+    assign instret_write = e.is_csr && (e.imm[11:0] == 12'hB02 || e.imm[11:0] == 12'hB82) &&
+                           (e.funct3[1:0] == 2'b01 || e.rs1 != 5'd0);
+
+    assign redirect    = e.valid && !stall_e &&
+                         (exception || e.mret || e.fence_i || instret_write || mispredict);
     assign cache_flush = ex_fire && e.fence_i && !exception;
     assign redirect_pc = exception ? mtvec : e.mret ? mepc :
                          (jump_e && !e.fence_i) ? target_e : e.pc + 32'd4;
