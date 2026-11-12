@@ -1601,9 +1601,15 @@ instances in 1.82 mm².
 
 ### Corners
 The same circuit is slower when hot, at low voltage, or on a "slow" wafer, so timing is checked at
-corners. Here: typical (25 °C, 1.8 V) 68.9 MHz, fast (-40 °C, 1.95 V) 105.7 MHz, slow (100 °C,
-1.6 V) 36.0 MHz. A chip is specified at its slowest corner, so as it stands this one is a 35 MHz
-part; reaching 50 MHz there needs the slow paths shortened (or pipelining).
+corners. First run: typical (25 °C, 1.8 V) 68.9 MHz, fast (-40 °C, 1.95 V) 105.7 MHz, slow (100 °C, 1.6 V)
+36.0 MHz. The timing report showed one path far worse than the rest (a software write to the
+`minstret` counter: forwarding, CSR logic and a 64-bit subtraction in one cycle), then the
+mispredict flush, which gated every field of two pipeline registers. After fixing both in the RTL
+(two-cycle counter write; the flush only clears valid bits) and turning on timing repair after
+routing: typical 77.9 MHz, slow 41.7 MHz (worst extraction corner 39.9 MHz). A chip is specified at
+its slowest corner, so this is a ~40 MHz part; the remaining worst paths are spread over many
+places, so 50 MHz there would need a deeper pipeline. Fixing the counter path also exposed a real
+bug: writing the counter's high half lost two counts (caught by a new lockstep test).
 
 ### Gate-level simulation
 The final netlist (after placement, clock tree and buffering) was simulated with the PDK's cell
@@ -1627,8 +1633,8 @@ faster cells. I report both numbers instead of only the typical one.
 **What are antenna violations?**
 During manufacturing, a long metal wire collects charge before the upper layers connect it to a
 driver; if only a transistor gate is attached, the charge can damage the thin gate oxide. Fixes:
-add a diode to drain the charge, or break the wire with a jump to a higher layer. Here 153 nets are
-flagged; OpenLane can insert the diodes.
+add a diode to drain the charge, or break the wire with a jump to a higher layer. The first run had 153
+flagged nets; with OpenLane's diode insertion on, 29.
 
 **Why convert SystemVerilog with sv2v instead of feeding it to the tools directly?**
 Open-source synthesis (Yosys) reads only part of SystemVerilog, and its SystemVerilog plugin

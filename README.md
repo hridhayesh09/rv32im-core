@@ -16,7 +16,7 @@ SystemVerilog, grown into a system-on-chip on the Terasic DE10-Lite (Intel MAX 1
 | 4 | Systolic array accelerator, MNIST software vs accelerator | **runs on the DE10-Lite**: 16x16 NPU, MNIST bit-exact, 38.49x faster than software |
 | 5 | I/D caches, branch predictor, CoreMark, measured tradeoffs | **runs on the DE10-Lite**: 2.70 CoreMark/MHz; [tradeoff table](docs/notes.md#stage-5-the-tradeoff-table) |
 | Doom | doomgeneric with picolibc, 8-bit VGA mode, keyboard over the UART | **runs on the DE10-Lite**: playable with the laptop's keyboard, 11.7 fps in Doom's timedemo |
-| 6 | OpenLane on Sky130 | **GDS layout**: DRC and LVS clean, 68.9 MHz at the typical corner, gate-level netlist passes the riscv-tests ([docs/asic.md](docs/asic.md)) |
+| 6 | OpenLane on Sky130 | **GDS layout**: DRC and LVS clean, 77.9 MHz at the typical corner, gate-level netlist passes the riscv-tests ([docs/asic.md](docs/asic.md)) |
 
 The full plan for each stage is in [docs/roadmap.md](docs/roadmap.md).
 Plain-English explanations of every part of the design, with interview questions,
@@ -102,10 +102,10 @@ is the slowest. (`python tools/bp_sweep.py`; 1-cycle memory, simulation.)
 
 | Area | DRC / LVS | Fmax (typical / slow corner) | Power | Gate-level riscv-tests |
 |---|---|---|---|---|
-| 1.82 mm² die, 95,916 instances | 0 / 0 errors | 68.9 MHz / 36.0 MHz | 149 mW (estimate) | 50 / 50 match Spike |
+| 1.83 mm² die, 146,809 instances | 0 / 0 errors | 77.9 MHz / 41.7 MHz | 135 mW (estimate) | 50 / 50 match Spike |
 
-Not yet sign-off clean: 153 antenna violations and max slew/capacitance warnings remain, and 50 MHz
-is not met at the slow corner.
+Not yet sign-off clean: 29 antenna violations and max slew/capacitance/fanout warnings remain, and
+50 MHz is not met at the slow corner.
 
 **Doom on the board** ([board log](docs/results/board_2026-11-11.md#doom), [how it works](docs/notes.md#doom))
 

@@ -51,10 +51,11 @@ used for Doom).
   149/182 M9K, meets 50 MHz (Fmax varies 51-57 MHz between builds).
 - Tradeoff table (12 configurations, Quartus cost vs CoreMark): predictor costs 1,657 LEs (12%) for
   +16.5%; caches have a knee at 2-4 KB; 2-way only helps small caches.
-- Sky130 layout (core + predictor + 256-byte caches, OpenLane 2): 1.82 mm2 die, 95,916 instances,
-  Magic/KLayout DRC 0, LVS 0; 68.9 MHz typical corner, 36.0 MHz slow corner (100C, 1.6 V); 149 mW
+- Sky130 layout (core + predictor + 256-byte caches, OpenLane 2): 1.83 mm2 die, 146,809 instances,
+  Magic/KLayout DRC 0, LVS 0; 77.9 MHz typical corner, 41.7 MHz slow corner (100C, 1.6 V); 135 mW
   estimated. Gate-level simulation of the final netlist: all 50 riscv-tests match Spike (24,360
-  instructions). Not sign-off clean: 153 antenna violations, slow corner misses 50 MHz.
+  instructions). Not sign-off clean: 29 antenna violations, slew/cap/fanout warnings,
+  slow corner misses 50 MHz (worst paths spread out; would need a deeper pipeline).
 
 ## Verification
 Every retired instruction compared with Spike (lockstep via rvfi signals): riscv-tests rv32ui 42/42
@@ -82,6 +83,7 @@ fpga/de10lite/ (Quartus), asic/ (OpenLane flow), docs/ (README results, notes.md
 and interview questions, board_bringup.md, asic.md, results/ board logs).
 
 ## Status and what's left
-All stages done (0-6 + Doom). Optional: fix the chip's antenna violations (diode insertion) and the
-slow-corner timing (worst paths: minstret CSR write, then the branch-mispredict flush); film a demo;
+All stages done (0-6 + Doom). The chip's two worst paths were fixed in the RTL (slow corner 36 ->
+41.7 MHz), diode insertion cut antenna violations 153 -> 29, and that work found a real bug
+(minstreth writes lost 2 counts, now fixed). Optional: remaining antennas and electrical warnings; film a demo;
 possible future stages: interrupts + a small OS (FreeRTOS), out-of-order execution.
